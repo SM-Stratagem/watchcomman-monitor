@@ -1,7 +1,13 @@
 import { sql } from "drizzle-orm";
 import { getDb } from "./db";
-import { ingestRuns, regionStats, signals } from "../../db/schema";
-import { buildSeedSignals, type SeedSignal } from "./seed-signals";
+import { categoryStats, countryStats, ingestRuns, regionStats, signals } from "../../db/schema";
+import { buildSeedSignals } from "./seed-signals";
+import type { NormalizedSignal } from "./feeds/types";
+import { fetchUsgs } from "./feeds/usgs";
+import { fetchEonet } from "./feeds/eonet";
+import { fetchReliefWeb } from "./feeds/reliefweb";
+import { fetchGdacs } from "./feeds/gdacs";
+import { fetchWhoDon } from "./feeds/who";
 
 export type IngestResult = {
   runId: number;
@@ -10,9 +16,10 @@ export type IngestResult = {
   total: number;
   errors: number;
   durationMs: number;
+  bySource: Record<string, number>;
 };
 
-const SEVERITY_WEIGHT: Record<SeedSignal["severity"], number> = {
+const SEVERITY_WEIGHT: Record<NormalizedSignal["severity"], number> = {
   low: 1,
   moderate: 2,
   elevated: 3,
@@ -20,50 +27,56 @@ const SEVERITY_WEIGHT: Record<SeedSignal["severity"], number> = {
   critical: 5,
 };
 
-async function fetchUpstreamSignals(): Promise<SeedSignal[]> {
-  // Hook for live ingestion. The base shape lets future implementations call
-  // the Ebola Monitor and Hantavirus Monitor APIs, normalise their output,
-  // and return SeedSignal-compatible records. Until those endpoints expose a
-  // shared schema we return the deterministic seed set so the page always
-  // renders meaningful, current-feeling data.
-  const upstream: SeedSignal[] = [];
+async function fetchAll(): Promise<NormalizedSignal[]> {
+  const tasks: Array<Promise<NormalizedSignal[]>> = [
+    fetchUsgs(),
+    fetchEonet(),
+    fetchReliefWeb(),
+    fetchGdacs(),
+    fetchWhoDon(),
+  ];
 
+  // Optional sibling-monitor feeds.
   const ebolaUrl = process.env.EBOLA_MONITOR_FEED_URL;
   const hantaUrl = process.env.HANTA_MONITOR_FEED_URL;
+  if (ebolaUrl) tasks.push(fetchSibling(ebolaUrl, "ebola"));
+  if (hantaUrl) tasks.push(fetchSibling(hantaUrl, "hantavirus"));
 
-  if (ebolaUrl) {
-    try {
-      const res = await fetch(ebolaUrl, { headers: { accept: "application/json" } });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data?.signals)) {
-          for (const s of data.signals) {
-            if (s?.externalKey && s?.title) upstream.push(s as SeedSignal);
-          }
-        }
-      }
-    } catch {
-      // Network failure should not break the run.
+  const results = await Promise.all(tasks.map((p) => p.catch(() => [] as NormalizedSignal[])));
+  return results.flat();
+}
+
+async function fetchSibling(url: string, source: string): Promise<NormalizedSignal[]> {
+  try {
+    const res = await fetch(url, { headers: { accept: "application/json" } });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { signals?: Array<Partial<NormalizedSignal>> };
+    if (!Array.isArray(data?.signals)) return [];
+    const out: NormalizedSignal[] = [];
+    for (const s of data.signals) {
+      if (!s.externalKey || !s.title) continue;
+      out.push({
+        externalKey: String(s.externalKey),
+        source: s.source || source,
+        category: s.category || "outbreak",
+        subcategory: s.subcategory ?? null,
+        severity: (s.severity as NormalizedSignal["severity"]) || "moderate",
+        title: s.title,
+        summary: s.summary ?? null,
+        region: s.region || "Global",
+        country: s.country ?? null,
+        latitude: typeof s.latitude === "number" ? s.latitude : null,
+        longitude: typeof s.longitude === "number" ? s.longitude : null,
+        magnitude: typeof s.magnitude === "number" ? s.magnitude : null,
+        affected: typeof s.affected === "number" ? s.affected : null,
+        occurredAt: s.occurredAt || new Date().toISOString(),
+        sourceUrl: s.sourceUrl ?? null,
+      });
     }
+    return out;
+  } catch {
+    return [];
   }
-
-  if (hantaUrl) {
-    try {
-      const res = await fetch(hantaUrl, { headers: { accept: "application/json" } });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data?.signals)) {
-          for (const s of data.signals) {
-            if (s?.externalKey && s?.title) upstream.push(s as SeedSignal);
-          }
-        }
-      }
-    } catch {
-      // Network failure should not break the run.
-    }
-  }
-
-  return upstream;
 }
 
 export async function ingestSignals(): Promise<IngestResult> {
@@ -80,12 +93,15 @@ export async function ingestSignals(): Promise<IngestResult> {
   let errors = 0;
 
   const seed = buildSeedSignals(startedAt);
-  const upstream = await fetchUpstreamSignals();
+  const live = await fetchAll();
 
-  const byKey = new Map<string, SeedSignal>();
-  for (const s of seed) byKey.set(s.externalKey, s);
-  for (const s of upstream) byKey.set(s.externalKey, s);
+  const byKey = new Map<string, NormalizedSignal>();
+  for (const s of seed) byKey.set(s.externalKey, s as NormalizedSignal);
+  for (const s of live) byKey.set(s.externalKey, s);
   const all = Array.from(byKey.values());
+
+  const bySource: Record<string, number> = {};
+  for (const s of all) bySource[s.source] = (bySource[s.source] ?? 0) + 1;
 
   for (const s of all) {
     try {
@@ -95,6 +111,7 @@ export async function ingestSignals(): Promise<IngestResult> {
           externalKey: s.externalKey,
           source: s.source,
           category: s.category,
+          subcategory: s.subcategory ?? null,
           severity: s.severity,
           title: s.title,
           summary: s.summary,
@@ -102,6 +119,8 @@ export async function ingestSignals(): Promise<IngestResult> {
           country: s.country,
           latitude: s.latitude != null ? String(s.latitude) : null,
           longitude: s.longitude != null ? String(s.longitude) : null,
+          magnitude: s.magnitude != null ? String(s.magnitude) : null,
+          affected: s.affected ?? null,
           occurredAt: new Date(s.occurredAt),
           sourceUrl: s.sourceUrl ?? null,
         })
@@ -111,6 +130,9 @@ export async function ingestSignals(): Promise<IngestResult> {
             severity: s.severity,
             title: s.title,
             summary: s.summary,
+            subcategory: s.subcategory ?? null,
+            magnitude: s.magnitude != null ? String(s.magnitude) : null,
+            affected: s.affected ?? null,
             occurredAt: new Date(s.occurredAt),
             sourceUrl: s.sourceUrl ?? null,
           },
@@ -130,22 +152,47 @@ export async function ingestSignals(): Promise<IngestResult> {
     }
   }
 
-  // Rebuild region rollups.
+  // Rebuild rollups (region, country, category).
   const regionAgg = new Map<string, { count: number; score: number }>();
+  const countryAgg = new Map<string, { count: number; score: number }>();
+  const categoryAgg = new Map<string, { count: number; score: number }>();
   for (const s of all) {
-    const entry = regionAgg.get(s.region) ?? { count: 0, score: 0 };
-    entry.count += 1;
-    entry.score += SEVERITY_WEIGHT[s.severity] ?? 1;
-    regionAgg.set(s.region, entry);
+    const w = SEVERITY_WEIGHT[s.severity] ?? 1;
+    if (s.region) {
+      const e = regionAgg.get(s.region) ?? { count: 0, score: 0 };
+      e.count++; e.score += w; regionAgg.set(s.region, e);
+    }
+    if (s.country) {
+      const e = countryAgg.get(s.country) ?? { count: 0, score: 0 };
+      e.count++; e.score += w; countryAgg.set(s.country, e);
+    }
+    const e = categoryAgg.get(s.category) ?? { count: 0, score: 0 };
+    e.count++; e.score += w; categoryAgg.set(s.category, e);
   }
 
   try {
     await db.execute(sql`DELETE FROM ${regionStats}`);
-    for (const [region, { count, score }] of regionAgg.entries()) {
+    for (const [region, v] of regionAgg.entries()) {
       await db.insert(regionStats).values({
         region,
-        activeSignals: count,
-        severityScore: String(score.toFixed(2)),
+        activeSignals: v.count,
+        severityScore: String(v.score.toFixed(2)),
+      });
+    }
+    await db.execute(sql`DELETE FROM ${countryStats}`);
+    for (const [country, v] of countryAgg.entries()) {
+      await db.insert(countryStats).values({
+        country,
+        activeSignals: v.count,
+        severityScore: String(v.score.toFixed(2)),
+      });
+    }
+    await db.execute(sql`DELETE FROM ${categoryStats}`);
+    for (const [category, v] of categoryAgg.entries()) {
+      await db.insert(categoryStats).values({
+        category,
+        activeSignals: v.count,
+        severityScore: String(v.score.toFixed(2)),
       });
     }
   } catch {
@@ -161,6 +208,7 @@ export async function ingestSignals(): Promise<IngestResult> {
       updated,
       total: all.length,
       errors,
+      notes: JSON.stringify(bySource).slice(0, 800),
     })
     .where(sql`${ingestRuns.id} = ${run.id}`);
 
@@ -171,5 +219,6 @@ export async function ingestSignals(): Promise<IngestResult> {
     total: all.length,
     errors,
     durationMs: endedAt.getTime() - startedAt.getTime(),
+    bySource,
   };
 }

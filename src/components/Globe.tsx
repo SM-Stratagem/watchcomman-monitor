@@ -9,11 +9,13 @@ export type GlobePoint = {
   lng: number;
   severity: "low" | "moderate" | "elevated" | "high" | "critical" | string;
   label: string;
+  href?: string;
 };
 
 type Props = {
   points: GlobePoint[];
   onHover?: (point: GlobePoint | null) => void;
+  onClick?: (point: GlobePoint) => void;
 };
 
 const SEVERITY_COLOR: Record<string, string> = {
@@ -33,7 +35,7 @@ function latLngToVec3(lat: number, lng: number, radius: number) {
   return new THREE.Vector3(x, y, z);
 }
 
-export default function Globe({ points, onHover }: Props) {
+export default function Globe({ points, onHover, onClick }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [hovered, setHovered] = useState<GlobePoint | null>(null);
 
@@ -250,6 +252,7 @@ export default function Globe({ points, onHover }: Props) {
     let lastY = 0;
     let velX = 0;
     let velY = 0;
+    let lastHovered: GlobePoint | null = null;
 
     function onPointerMove(ev: PointerEvent) {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -266,15 +269,23 @@ export default function Globe({ points, onHover }: Props) {
         lastY = ev.clientY;
       }
     }
+    let downX = 0, downY = 0, downT = 0;
     function onPointerDown(ev: PointerEvent) {
       dragging = true;
       lastX = ev.clientX;
       lastY = ev.clientY;
+      downX = ev.clientX; downY = ev.clientY; downT = performance.now();
       (ev.target as Element).setPointerCapture?.(ev.pointerId);
     }
     function onPointerUp(ev: PointerEvent) {
       dragging = false;
       (ev.target as Element).releasePointerCapture?.(ev.pointerId);
+      const dx = Math.abs(ev.clientX - downX);
+      const dy = Math.abs(ev.clientY - downY);
+      const dt = performance.now() - downT;
+      if (dx < 6 && dy < 6 && dt < 400 && lastHovered && onClick) {
+        onClick(lastHovered);
+      }
     }
 
     renderer.domElement.addEventListener("pointermove", onPointerMove);
@@ -292,7 +303,6 @@ export default function Globe({ points, onHover }: Props) {
     resizeObserver.observe(container);
 
     let frame = 0;
-    let lastHovered: GlobePoint | null = null;
     const clock = new THREE.Clock();
 
     function animate() {

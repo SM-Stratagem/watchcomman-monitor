@@ -77,20 +77,14 @@ export function Header() {
             color: "var(--ink-1)",
           }}
         >
-          <a href="#globe" style={{ display: "none" }}>
-            Globe
-          </a>
-          <a href="#monitors" className="wm-nav-link">Monitors</a>
-          <a href="#about" className="wm-nav-link">About</a>
-          <a
-            href="https://www.ebolamonitorapp.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="wm-pill"
-            style={{ fontSize: 10 }}
-          >
+          <Link href="/signals" className="wm-nav-link">Signals</Link>
+          <Link href="/map" className="wm-nav-link">Map</Link>
+          <Link href="/countries" className="wm-nav-link">Countries</Link>
+          <Link href="/api-docs" className="wm-nav-link">API</Link>
+          <Link href="/about" className="wm-nav-link">About</Link>
+          <span className="wm-pill" style={{ fontSize: 10 }}>
             <span className="wm-dot" /> LIVE
-          </a>
+          </span>
         </nav>
       </div>
       <style>{`

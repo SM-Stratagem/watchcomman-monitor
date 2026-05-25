@@ -5,8 +5,9 @@
 
 export type SeedSignal = {
   externalKey: string;
-  source: "ebola" | "hantavirus" | "seed";
-  category: "outbreak" | "advisory" | "logistics" | "environment";
+  source: string;
+  category: string;
+  subcategory?: string | null;
   severity: "low" | "moderate" | "elevated" | "high" | "critical";
   title: string;
   summary: string;
@@ -14,8 +15,10 @@ export type SeedSignal = {
   country: string;
   latitude: number;
   longitude: number;
+  magnitude?: number | null;
+  affected?: number | null;
   occurredAt: string;
-  sourceUrl?: string;
+  sourceUrl?: string | null;
 };
 
 const HOUR = 60 * 60 * 1000;
