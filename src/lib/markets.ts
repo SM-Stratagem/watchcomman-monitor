@@ -14,9 +14,9 @@ export type Quote = {
 const CRYPTO_IDS = ["bitcoin", "ethereum", "binancecoin", "solana", "ripple", "cardano", "tron", "dogecoin"];
 
 export async function fetchCrypto(): Promise<Quote[]> {
-  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${CRYPTO_IDS.join(",")}&vs_currencies=usd&include_24hr_change=true`;
-  const data = (await safeFetchJson(url, { timeoutMs: 6000 })) as Record<string, { usd: number; usd_24h_change: number }> | null;
-  if (!data) return [];
+  // Try CoinGecko first
+  const cgUrl = `https://api.coingecko.com/api/v3/simple/price?ids=${CRYPTO_IDS.join(",")}&vs_currencies=usd&include_24hr_change=true`;
+  const cg = (await safeFetchJson(cgUrl, { timeoutMs: 5000 })) as Record<string, { usd: number; usd_24h_change: number }> | null;
   const NAMES: Record<string, { sym: string; name: string }> = {
     bitcoin: { sym: "BTC", name: "Bitcoin" },
     ethereum: { sym: "ETH", name: "Ethereum" },
@@ -27,14 +27,29 @@ export async function fetchCrypto(): Promise<Quote[]> {
     tron: { sym: "TRX", name: "Tron" },
     dogecoin: { sym: "DOGE", name: "Dogecoin" },
   };
-  const out: Quote[] = [];
-  for (const id of CRYPTO_IDS) {
-    const v = data[id];
-    if (!v) continue;
-    const meta = NAMES[id];
-    out.push({ symbol: meta.sym, name: meta.name, price: v.usd, changePct: v.usd_24h_change ?? 0, unit: "USD" });
+  if (cg && Object.keys(cg).length) {
+    const out: Quote[] = [];
+    for (const id of CRYPTO_IDS) {
+      const v = cg[id];
+      if (!v) continue;
+      const meta = NAMES[id];
+      out.push({ symbol: meta.sym, name: meta.name, price: v.usd, changePct: v.usd_24h_change ?? 0, unit: "USD" });
+    }
+    if (out.length) return out;
   }
-  return out;
+  // Fallback: CoinCap (free, often allows cloud IPs)
+  const ccUrl = "https://api.coincap.io/v2/assets?limit=20";
+  const cc = (await safeFetchJson(ccUrl, { timeoutMs: 5000 })) as { data?: Array<{ id: string; symbol: string; name: string; priceUsd: string; changePercent24Hr: string }> } | null;
+  if (cc?.data?.length) {
+    const want = new Set(["bitcoin", "ethereum", "binance-coin", "solana", "xrp", "cardano", "tron", "dogecoin"]);
+    const out: Quote[] = [];
+    for (const a of cc.data) {
+      if (!want.has(a.id)) continue;
+      out.push({ symbol: a.symbol, name: a.name, price: Number(a.priceUsd), changePct: Number(a.changePercent24Hr), unit: "USD" });
+    }
+    return out;
+  }
+  return [];
 }
 
 export async function fetchFx(): Promise<Quote[]> {
@@ -76,16 +91,41 @@ async function fetchStooqOne(symbol: string): Promise<number | null> {
   } catch { return null; }
 }
 
+async function fetchYahooOne(symbol: string): Promise<number | null> {
+  try {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`, {
+      headers: {
+        "user-agent": "Mozilla/5.0 (compatible; watchcomman/1.0)",
+        accept: "application/json",
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(t);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { chart?: { result?: Array<{ meta?: { regularMarketPrice?: number } }> } };
+    const p = data.chart?.result?.[0]?.meta?.regularMarketPrice;
+    return typeof p === "number" && p > 0 ? p : null;
+  } catch { return null; }
+}
+
+async function fetchSymbol(stooq: string, yahoo: string): Promise<number | null> {
+  // Try both in parallel, return first successful
+  const [s, y] = await Promise.all([fetchStooqOne(stooq), fetchYahooOne(yahoo)]);
+  return s ?? y ?? null;
+}
+
 export async function fetchCommodities(): Promise<Quote[]> {
-  const SYMBOLS: Array<{ stooq: string; sym: string; name: string; unit: string }> = [
-    { stooq: "cl.f", sym: "WTI", name: "Crude Oil (WTI)", unit: "USD/bbl" },
-    { stooq: "co.f", sym: "Brent", name: "Brent Crude", unit: "USD/bbl" },
-    { stooq: "gc.f", sym: "Gold", name: "Gold", unit: "USD/oz" },
-    { stooq: "si.f", sym: "Silver", name: "Silver", unit: "USD/oz" },
-    { stooq: "hg.f", sym: "Copper", name: "Copper", unit: "USD/lb" },
-    { stooq: "ng.f", sym: "NatGas", name: "Natural Gas", unit: "USD/MMBtu" },
+  const SYMBOLS: Array<{ stooq: string; yahoo: string; sym: string; name: string; unit: string }> = [
+    { stooq: "cl.f", yahoo: "CL=F", sym: "WTI", name: "Crude Oil (WTI)", unit: "USD/bbl" },
+    { stooq: "co.f", yahoo: "BZ=F", sym: "Brent", name: "Brent Crude", unit: "USD/bbl" },
+    { stooq: "gc.f", yahoo: "GC=F", sym: "Gold", name: "Gold", unit: "USD/oz" },
+    { stooq: "si.f", yahoo: "SI=F", sym: "Silver", name: "Silver", unit: "USD/oz" },
+    { stooq: "hg.f", yahoo: "HG=F", sym: "Copper", name: "Copper", unit: "USD/lb" },
+    { stooq: "ng.f", yahoo: "NG=F", sym: "NatGas", name: "Natural Gas", unit: "USD/MMBtu" },
   ];
-  const prices = await Promise.all(SYMBOLS.map((s) => fetchStooqOne(s.stooq)));
+  const prices = await Promise.all(SYMBOLS.map((s) => fetchSymbol(s.stooq, s.yahoo)));
   const out: Quote[] = [];
   for (let i = 0; i < SYMBOLS.length; i++) {
     const p = prices[i];
@@ -96,17 +136,17 @@ export async function fetchCommodities(): Promise<Quote[]> {
 }
 
 export async function fetchIndices(): Promise<Quote[]> {
-  const SYMBOLS: Array<{ stooq: string; sym: string; name: string }> = [
-    { stooq: "^spx", sym: "S&P 500", name: "S&P 500" },
-    { stooq: "^ndx", sym: "Nasdaq 100", name: "Nasdaq 100" },
-    { stooq: "^dji", sym: "Dow", name: "Dow Jones" },
-    { stooq: "^ftm", sym: "FTSE 100", name: "FTSE 100" },
-    { stooq: "^dax", sym: "DAX", name: "DAX" },
-    { stooq: "^nkx", sym: "Nikkei", name: "Nikkei 225" },
-    { stooq: "^hsi", sym: "Hang Seng", name: "Hang Seng" },
-    { stooq: "^vix", sym: "VIX", name: "VIX" },
+  const SYMBOLS: Array<{ stooq: string; yahoo: string; sym: string; name: string }> = [
+    { stooq: "^spx", yahoo: "^GSPC", sym: "S&P 500", name: "S&P 500" },
+    { stooq: "^ndx", yahoo: "^NDX", sym: "Nasdaq 100", name: "Nasdaq 100" },
+    { stooq: "^dji", yahoo: "^DJI", sym: "Dow", name: "Dow Jones" },
+    { stooq: "^ftm", yahoo: "^FTSE", sym: "FTSE 100", name: "FTSE 100" },
+    { stooq: "^dax", yahoo: "^GDAXI", sym: "DAX", name: "DAX" },
+    { stooq: "^nkx", yahoo: "^N225", sym: "Nikkei", name: "Nikkei 225" },
+    { stooq: "^hsi", yahoo: "^HSI", sym: "Hang Seng", name: "Hang Seng" },
+    { stooq: "^vix", yahoo: "^VIX", sym: "VIX", name: "VIX" },
   ];
-  const prices = await Promise.all(SYMBOLS.map((s) => fetchStooqOne(s.stooq)));
+  const prices = await Promise.all(SYMBOLS.map((s) => fetchSymbol(s.stooq, s.yahoo)));
   const out: Quote[] = [];
   for (let i = 0; i < SYMBOLS.length; i++) {
     const p = prices[i];
