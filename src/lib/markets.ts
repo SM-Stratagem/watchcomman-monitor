@@ -1,5 +1,5 @@
-// Live market data: crypto (CoinGecko), FX (exchangerate.host), public commodity references.
-// All free, no API key needed.
+// Live market data: crypto (CoinGecko), FX (Frankfurter), commodities + indices (Stooq).
+// All free, no API key.
 
 import { safeFetchJson } from "./feeds/types";
 
@@ -15,7 +15,7 @@ const CRYPTO_IDS = ["bitcoin", "ethereum", "binancecoin", "solana", "ripple", "c
 
 export async function fetchCrypto(): Promise<Quote[]> {
   const url = `https://api.coingecko.com/api/v3/simple/price?ids=${CRYPTO_IDS.join(",")}&vs_currencies=usd&include_24hr_change=true`;
-  const data = (await safeFetchJson(url)) as Record<string, { usd: number; usd_24h_change: number }> | null;
+  const data = (await safeFetchJson(url, { timeoutMs: 6000 })) as Record<string, { usd: number; usd_24h_change: number }> | null;
   if (!data) return [];
   const NAMES: Record<string, { sym: string; name: string }> = {
     bitcoin: { sym: "BTC", name: "Bitcoin" },
@@ -32,35 +32,19 @@ export async function fetchCrypto(): Promise<Quote[]> {
     const v = data[id];
     if (!v) continue;
     const meta = NAMES[id];
-    out.push({
-      symbol: meta.sym,
-      name: meta.name,
-      price: v.usd,
-      changePct: v.usd_24h_change ?? 0,
-      unit: "USD",
-    });
+    out.push({ symbol: meta.sym, name: meta.name, price: v.usd, changePct: v.usd_24h_change ?? 0, unit: "USD" });
   }
   return out;
 }
 
 export async function fetchFx(): Promise<Quote[]> {
-  // Frankfurter (ECB-backed, free, no key)
   const url = "https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR,GBP,JPY,CNY,INR,BRL,CHF,CAD,AUD,KRW,TRY,RUB";
-  const data = (await safeFetchJson(url)) as { rates?: Record<string, number> } | null;
+  const data = (await safeFetchJson(url, { timeoutMs: 6000 })) as { rates?: Record<string, number> } | null;
   if (!data?.rates) return [];
   const PAIRS: Array<[string, string]> = [
-    ["EUR", "Euro"],
-    ["GBP", "British Pound"],
-    ["JPY", "Japanese Yen"],
-    ["CNY", "Chinese Yuan"],
-    ["RUB", "Russian Ruble"],
-    ["INR", "Indian Rupee"],
-    ["BRL", "Brazilian Real"],
-    ["CHF", "Swiss Franc"],
-    ["CAD", "Canadian Dollar"],
-    ["AUD", "Australian Dollar"],
-    ["KRW", "South Korean Won"],
-    ["TRY", "Turkish Lira"],
+    ["EUR", "Euro"], ["GBP", "British Pound"], ["JPY", "Japanese Yen"], ["CNY", "Chinese Yuan"],
+    ["RUB", "Russian Ruble"], ["INR", "Indian Rupee"], ["BRL", "Brazilian Real"], ["CHF", "Swiss Franc"],
+    ["CAD", "Canadian Dollar"], ["AUD", "Australian Dollar"], ["KRW", "S. Korean Won"], ["TRY", "Turkish Lira"],
   ];
   const out: Quote[] = [];
   for (const [sym, name] of PAIRS) {
@@ -71,8 +55,27 @@ export async function fetchFx(): Promise<Quote[]> {
   return out;
 }
 
-// Cached commodity reference quotes: scrape-free public endpoint via Frankfurter for metals is unreliable.
-// We use stooq.com static CSV via fetch as a stable, key-less fallback for major futures.
+async function fetchStooqOne(symbol: string): Promise<number | null> {
+  try {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch(`https://stooq.com/q/l/?s=${symbol}&i=d`, {
+      headers: { "user-agent": "watchcomman-monitor/1.0" },
+      signal: controller.signal,
+    });
+    clearTimeout(t);
+    if (!res.ok) return null;
+    const csv = await res.text();
+    const lines = csv.trim().split("\n").filter((l) => l.trim());
+    for (const line of lines) {
+      const cols = line.split(",");
+      const p = Number(cols[6]);
+      if (Number.isFinite(p) && p > 0) return p;
+    }
+    return null;
+  } catch { return null; }
+}
+
 export async function fetchCommodities(): Promise<Quote[]> {
   const SYMBOLS: Array<{ stooq: string; sym: string; name: string; unit: string }> = [
     { stooq: "cl.f", sym: "WTI", name: "Crude Oil (WTI)", unit: "USD/bbl" },
@@ -82,34 +85,16 @@ export async function fetchCommodities(): Promise<Quote[]> {
     { stooq: "hg.f", sym: "Copper", name: "Copper", unit: "USD/lb" },
     { stooq: "ng.f", sym: "NatGas", name: "Natural Gas", unit: "USD/MMBtu" },
   ];
+  const prices = await Promise.all(SYMBOLS.map((s) => fetchStooqOne(s.stooq)));
   const out: Quote[] = [];
-  for (const s of SYMBOLS) {
-    try {
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 8000);
-      const res = await fetch(`https://stooq.com/q/l/?s=${s.stooq}&i=d`, {
-        headers: { "user-agent": "watchcomman-monitor/1.0" },
-        signal: controller.signal,
-      });
-      clearTimeout(t);
-      if (!res.ok) continue;
-      const csv = await res.text();
-      const lines = csv.trim().split("\n").filter((l) => l.trim());
-      // Stooq may or may not return a header. Find the first line with a numeric close (col 6).
-      let price = NaN;
-      for (const line of lines) {
-        const cols = line.split(",");
-        const p = Number(cols[6]);
-        if (Number.isFinite(p) && p > 0) { price = p; break; }
-      }
-      if (!Number.isFinite(price)) continue;
-      out.push({ symbol: s.sym, name: s.name, price, changePct: 0, unit: s.unit });
-    } catch {}
+  for (let i = 0; i < SYMBOLS.length; i++) {
+    const p = prices[i];
+    if (p == null) continue;
+    out.push({ symbol: SYMBOLS[i].sym, name: SYMBOLS[i].name, price: p, changePct: 0, unit: SYMBOLS[i].unit });
   }
   return out;
 }
 
-// Major equity indices via stooq (static CSV — close-of-prev day; intraday requires paid)
 export async function fetchIndices(): Promise<Quote[]> {
   const SYMBOLS: Array<{ stooq: string; sym: string; name: string }> = [
     { stooq: "^spx", sym: "S&P 500", name: "S&P 500" },
@@ -121,45 +106,37 @@ export async function fetchIndices(): Promise<Quote[]> {
     { stooq: "^hsi", sym: "Hang Seng", name: "Hang Seng" },
     { stooq: "^vix", sym: "VIX", name: "VIX" },
   ];
+  const prices = await Promise.all(SYMBOLS.map((s) => fetchStooqOne(s.stooq)));
   const out: Quote[] = [];
-  for (const s of SYMBOLS) {
-    try {
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 8000);
-      const res = await fetch(`https://stooq.com/q/l/?s=${s.stooq}&i=d`, {
-        headers: { "user-agent": "watchcomman-monitor/1.0" },
-        signal: controller.signal,
-      });
-      clearTimeout(t);
-      if (!res.ok) continue;
-      const csv = await res.text();
-      const lines = csv.trim().split("\n").filter((l) => l.trim());
-      // Stooq may or may not return a header. Find the first line with a numeric close (col 6).
-      let price = NaN;
-      for (const line of lines) {
-        const cols = line.split(",");
-        const p = Number(cols[6]);
-        if (Number.isFinite(p) && p > 0) { price = p; break; }
-      }
-      if (!Number.isFinite(price)) continue;
-      out.push({ symbol: s.sym, name: s.name, price, changePct: 0 });
-    } catch {}
+  for (let i = 0; i < SYMBOLS.length; i++) {
+    const p = prices[i];
+    if (p == null) continue;
+    out.push({ symbol: SYMBOLS[i].sym, name: SYMBOLS[i].name, price: p, changePct: 0 });
   }
   return out;
 }
 
-export async function getMarketSnapshot(): Promise<{
+// In-memory cache to avoid hitting Stooq/CoinGecko on every page render
+let cache: { snap: MarketSnapshot; expiresAt: number } | null = null;
+const TTL_MS = 90_000;
+
+export type MarketSnapshot = {
   crypto: Quote[];
   fx: Quote[];
   commodities: Quote[];
   indices: Quote[];
   generated: string;
-}> {
+};
+
+export async function getMarketSnapshot(): Promise<MarketSnapshot> {
+  if (cache && cache.expiresAt > Date.now()) return cache.snap;
   const [crypto, fx, commodities, indices] = await Promise.all([
     fetchCrypto().catch(() => []),
     fetchFx().catch(() => []),
     fetchCommodities().catch(() => []),
     fetchIndices().catch(() => []),
   ]);
-  return { crypto, fx, commodities, indices, generated: new Date().toISOString() };
+  const snap = { crypto, fx, commodities, indices, generated: new Date().toISOString() };
+  cache = { snap, expiresAt: Date.now() + TTL_MS };
+  return snap;
 }
