@@ -9,7 +9,9 @@ import { fetchReliefWeb } from "./feeds/reliefweb";
 import { fetchGdacs } from "./feeds/gdacs";
 import { fetchWhoDon } from "./feeds/who";
 import { fetchGdelt } from "./feeds/gdelt";
+import { fetchNoaaAlerts } from "./feeds/noaa";
 import { fetchAllNews } from "./feeds/rss";
+import { fetchAllCommercialNews } from "./feeds/news-apis";
 
 export type IngestResult = {
   runId: number;
@@ -37,6 +39,7 @@ async function fetchAll(): Promise<NormalizedSignal[]> {
     fetchGdacs(),
     fetchWhoDon(),
     fetchGdelt(),
+    fetchNoaaAlerts(),
   ];
 
   // Optional sibling-monitor feeds.
@@ -207,11 +210,18 @@ export async function ingestSignals(): Promise<IngestResult> {
   let newsOk = 0;
   let newsFailed = 0;
   try {
-    const newsRes = await fetchAllNews({ concurrency: 12, max: 4000 });
+    const [newsRes, commercialRes] = await Promise.all([
+      fetchAllNews({ concurrency: 12, max: 4000 }),
+      fetchAllCommercialNews().catch(() => ({ items: [], bySource: {} })),
+    ]);
     newsOk = newsRes.okSources;
     newsFailed = newsRes.failedSources;
+    const combined = [...newsRes.items, ...commercialRes.items];
+    // Dedup
+    const seen = new Set<string>();
+    const finalItems = combined.filter((i) => seen.has(i.externalKey) ? false : (seen.add(i.externalKey), true));
     // Batch upsert
-    for (const item of newsRes.items) {
+    for (const item of finalItems) {
       try {
         await db.insert(news).values({
           externalKey: item.externalKey,

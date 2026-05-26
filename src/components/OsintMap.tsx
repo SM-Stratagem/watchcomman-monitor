@@ -1,11 +1,11 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { SignalRow } from "@/lib/dashboard";
 import { LAYERS, type MapMarker } from "@/lib/map-layers";
 import { severityColor } from "@/lib/format";
 
-const W = 1600;
-const H = 760;
+const W = 1800;
+const H = 900;
 
 function project(lat: number, lng: number): [number, number] {
   const x = ((lng + 180) / 360) * W;
@@ -15,13 +15,56 @@ function project(lat: number, lng: number): [number, number] {
 
 const SEV_R: Record<string, number> = { critical: 9, high: 7, elevated: 5.5, moderate: 4.4, low: 3.4 };
 
+type Flight = { icao24: string; callsign: string; lat: number; lng: number; alt: number | null; heading: number | null };
+
+// Tiny simplified world borders fetched from CDN (natural earth via geojson).
+// We use a public mirror; if it 404s, we silently fall back to grid only.
+const WORLD_GEOJSON_URL = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
+
+type Topo = { type: "Topology"; objects: { countries: unknown }; arcs: number[][][]; transform?: { scale: [number, number]; translate: [number, number] } };
+
 export function OsintMap({ signals }: { signals: SignalRow[] }) {
   const [activeLayers, setActiveLayers] = useState<Record<string, boolean>>(
     () => Object.fromEntries(LAYERS.map((l) => [l.slug, l.defaultOn])),
   );
-  const [hover, setHover] = useState<{ kind: "signal"; sig: SignalRow } | { kind: "marker"; m: MapMarker; layer: string } | null>(null);
+  const [hover, setHover] = useState<{ kind: "signal"; sig: SignalRow } | { kind: "marker"; m: MapMarker; layer: string } | { kind: "flight"; f: Flight } | null>(null);
   const [sevFilter, setSevFilter] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [flights, setFlights] = useState<Flight[]>([]);
+  const [showFlights, setShowFlights] = useState(false);
+  const [borderPaths, setBorderPaths] = useState<string>("");
+
+  // Lazy-load country borders
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(WORLD_GEOJSON_URL);
+        if (!res.ok) return;
+        const topo = (await res.json()) as Topo;
+        const paths = topojsonToSvgPaths(topo);
+        if (!cancelled) setBorderPaths(paths);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Lazy-load flights (only when toggled on)
+  useEffect(() => {
+    if (!showFlights) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await fetch("/api/v1/flights");
+        if (!res.ok) return;
+        const d = await res.json();
+        if (!cancelled) setFlights(d.flights ?? []);
+      } catch {}
+    };
+    tick();
+    const t = setInterval(tick, 90_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [showFlights]);
 
   const visibleSignals = useMemo(() => signals.filter((s) => {
     if (s.latitude == null || s.longitude == null) return false;
@@ -48,24 +91,22 @@ export function OsintMap({ signals }: { signals: SignalRow[] }) {
         background: "linear-gradient(180deg, rgba(4,6,12,0.85), rgba(4,6,12,0))",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span className="wm-mono" style={{ fontSize: 10, color: "var(--accent)", letterSpacing: "0.22em", textTransform: "uppercase" }}>● LIVE</span>
+          <span className="wm-mono" style={{ fontSize: 10, color: "var(--accent)", letterSpacing: "0.22em" }}>● LIVE</span>
           <span className="wm-mono" style={{ fontSize: 10, color: "var(--ink-3)", letterSpacing: "0.18em" }}>
-            GLOBAL SITUATION · {totalActiveCount} SIGNALS · {layerCount} LAYER ITEMS
+            GLOBAL SITUATION · {totalActiveCount} SIGNALS · {layerCount} LAYER ITEMS{showFlights ? ` · ${flights.length} AIRCRAFT` : ""}
           </span>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search country, region, keyword…"
-            className="wm-mono"
-            style={{
-              background: "rgba(0,0,0,0.4)", border: "1px solid var(--line-strong)",
-              padding: "5px 12px", borderRadius: 999, color: "var(--ink-0)",
-              fontSize: 11, letterSpacing: "0.1em", width: 220,
-            }}
-          />
-        </div>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search country, region, keyword…"
+          className="wm-mono"
+          style={{
+            background: "rgba(0,0,0,0.4)", border: "1px solid var(--line-strong)",
+            padding: "5px 12px", borderRadius: 999, color: "var(--ink-0)",
+            fontSize: 11, letterSpacing: "0.1em", width: 240,
+          }}
+        />
       </div>
 
       {/* Left layer panel */}
@@ -92,6 +133,12 @@ export function OsintMap({ signals }: { signals: SignalRow[] }) {
               <span className="wm-mono" style={{ marginLeft: "auto", fontSize: 9, color: "var(--ink-3)" }}>{l.data.length}</span>
             </label>
           ))}
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 11, paddingTop: 6, borderTop: "1px solid var(--line)" }}>
+            <input type="checkbox" checked={showFlights} onChange={(e) => setShowFlights(e.target.checked)} style={{ accentColor: "#a8e6ff" }} />
+            <span style={{ color: "#a8e6ff", fontWeight: 600, width: 12 }}>✈</span>
+            <span className="wm-mono" style={{ color: "var(--ink-1)", letterSpacing: "0.1em", fontSize: 10, textTransform: "uppercase" }}>Live flights</span>
+            <span className="wm-mono" style={{ marginLeft: "auto", fontSize: 9, color: "var(--ink-3)" }}>{flights.length || "—"}</span>
+          </label>
         </div>
         <div className="wm-mono" style={{ fontSize: 9, color: "var(--ink-3)", letterSpacing: "0.2em", marginTop: 12 }}>SEVERITY</div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
@@ -114,13 +161,6 @@ export function OsintMap({ signals }: { signals: SignalRow[] }) {
 
       {/* MAP SVG */}
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }}>
-        <defs>
-          <radialGradient id="signal-glow">
-            <stop offset="0%" stopOpacity="0.7" />
-            <stop offset="100%" stopOpacity="0" />
-          </radialGradient>
-        </defs>
-
         {/* Grid */}
         {[15, 30, 45, 60, 75].map((g) => (
           <g key={g} stroke="rgba(255,255,255,0.04)" strokeWidth="0.5">
@@ -135,6 +175,28 @@ export function OsintMap({ signals }: { signals: SignalRow[] }) {
         })}
         <line x1="0" x2={W} y1={H / 2} y2={H / 2} stroke="rgba(255,255,255,0.08)" strokeWidth="0.8" />
         <line x1={W / 2} x2={W / 2} y1="0" y2={H} stroke="rgba(255,255,255,0.08)" strokeWidth="0.8" />
+
+        {/* Country borders (lazy-loaded) */}
+        {borderPaths ? (
+          <g fill="rgba(40,55,90,0.18)" stroke="rgba(125,160,220,0.18)" strokeWidth="0.4">
+            <path d={borderPaths} />
+          </g>
+        ) : null}
+
+        {/* Flights */}
+        {showFlights && flights.map((f) => {
+          const [x, y] = project(f.lat, f.lng);
+          return (
+            <g key={f.icao24}
+              onMouseEnter={() => setHover({ kind: "flight", f })}
+              onMouseLeave={() => setHover((h) => (h?.kind === "flight" && h.f.icao24 === f.icao24 ? null : h))}
+              transform={`translate(${x}, ${y})${f.heading != null ? ` rotate(${f.heading})` : ""}`}
+              style={{ cursor: "pointer" }}
+            >
+              <path d="M0,-3 L2,2 L0,1 L-2,2 Z" fill="#a8e6ff" opacity="0.7" />
+            </g>
+          );
+        })}
 
         {/* Layers */}
         {LAYERS.filter((l) => activeLayers[l.slug]).map((l) => (
@@ -196,7 +258,7 @@ export function OsintMap({ signals }: { signals: SignalRow[] }) {
         ))}
       </div>
 
-      {/* Hover detail card */}
+      {/* Hover detail */}
       {hover ? (
         <div className="wm-glass" style={{
           position: "absolute", right: 16, top: 56, maxWidth: 360, padding: 14,
@@ -215,7 +277,7 @@ export function OsintMap({ signals }: { signals: SignalRow[] }) {
                 {hover.sig.country ?? hover.sig.region ?? "—"} · {new Date(hover.sig.occurredAt).toLocaleString()}
               </div>
             </>
-          ) : (
+          ) : hover.kind === "marker" ? (
             <>
               <div className="wm-mono" style={{ fontSize: 10, color: "var(--accent)", letterSpacing: "0.2em", textTransform: "uppercase" }}>
                 {hover.layer}
@@ -224,9 +286,77 @@ export function OsintMap({ signals }: { signals: SignalRow[] }) {
               {hover.m.country ? <div style={{ marginTop: 4, color: "var(--ink-2)", fontSize: 12 }}>{hover.m.country}</div> : null}
               {hover.m.note ? <div style={{ marginTop: 6, color: "var(--ink-3)", fontSize: 11 }}>{hover.m.note}</div> : null}
             </>
+          ) : (
+            <>
+              <div className="wm-mono" style={{ fontSize: 10, color: "#a8e6ff", letterSpacing: "0.2em", textTransform: "uppercase" }}>✈ LIVE AIRCRAFT</div>
+              <div style={{ marginTop: 6, color: "var(--ink-0)", fontSize: 14 }}>{hover.f.callsign}</div>
+              <div className="wm-mono" style={{ marginTop: 6, fontSize: 11, color: "var(--ink-2)", letterSpacing: "0.06em" }}>
+                ICAO {hover.f.icao24}{hover.f.alt != null ? ` · ${Math.round(hover.f.alt)} m` : ""}{hover.f.heading != null ? ` · HDG ${Math.round(hover.f.heading)}°` : ""}
+              </div>
+            </>
           )}
         </div>
       ) : null}
     </div>
   );
+}
+
+// ── Minimal TopoJSON → SVG path converter (single concatenated path string)
+function topojsonToSvgPaths(topo: Topo): string {
+  try {
+    const objects = topo.objects.countries as { type: string; geometries: Array<{ type: string; arcs: number[][] | number[][][] }> };
+    if (!objects || !objects.geometries) return "";
+    const arcs = topo.arcs;
+    const scale = topo.transform?.scale ?? [1, 1];
+    const translate = topo.transform?.translate ?? [0, 0];
+
+    function decodeArc(idx: number): number[][] {
+      const reverse = idx < 0;
+      const arc = arcs[reverse ? ~idx : idx];
+      const pts: number[][] = [];
+      let x = 0, y = 0;
+      for (const [dx, dy] of arc) {
+        x += dx; y += dy;
+        const lng = x * scale[0] + translate[0];
+        const lat = y * scale[1] + translate[1];
+        pts.push([lng, lat]);
+      }
+      return reverse ? pts.reverse() : pts;
+    }
+
+    function ringToPath(ring: number[]): string {
+      let d = "";
+      let pts: number[][] = [];
+      for (let i = 0; i < ring.length; i++) {
+        const arcPts = decodeArc(ring[i]);
+        if (i === 0) pts = arcPts;
+        else pts = pts.concat(arcPts.slice(1));
+      }
+      for (let i = 0; i < pts.length; i++) {
+        const [lng, lat] = pts[i];
+        const x = ((lng + 180) / 360) * W;
+        const y = ((90 - lat) / 180) * H;
+        d += `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+      }
+      return d + "Z";
+    }
+
+    let path = "";
+    for (const geo of objects.geometries) {
+      if (geo.type === "Polygon") {
+        for (const ring of (geo.arcs as number[][])) {
+          path += ringToPath(ring);
+        }
+      } else if (geo.type === "MultiPolygon") {
+        for (const poly of (geo.arcs as number[][][])) {
+          for (const ring of poly) {
+            path += ringToPath(ring);
+          }
+        }
+      }
+    }
+    return path;
+  } catch {
+    return "";
+  }
 }
