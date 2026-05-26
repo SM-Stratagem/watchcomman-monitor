@@ -32,6 +32,7 @@ export async function getFlights(): Promise<Flight[]> {
     const res = await fetch("https://opensky-network.org/api/states/all", { headers, signal: controller.signal });
     clearTimeout(t);
     if (!res.ok) {
+      console.log(`[opensky] HTTP ${res.status} from ${user ? "authed" : "anon"} request`);
       cache = { items: [], expiresAt: Date.now() + 60_000 };
       return [];
     }
@@ -57,7 +58,8 @@ export async function getFlights(): Promise<Flight[]> {
     }
     cache = { items, expiresAt: Date.now() + TTL_MS };
     return items;
-  } catch {
+  } catch (e) {
+    console.log(`[opensky] fetch error: ${e instanceof Error ? e.message : String(e)}`);
     cache = { items: [], expiresAt: Date.now() + 60_000 };
     return [];
   }
