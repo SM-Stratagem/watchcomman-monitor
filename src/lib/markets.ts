@@ -44,8 +44,8 @@ export async function fetchCrypto(): Promise<Quote[]> {
 }
 
 export async function fetchFx(): Promise<Quote[]> {
-  // exchangerate.host is free; uses EUR as base by default. We pivot to USD.
-  const url = "https://api.exchangerate.host/latest?base=USD&symbols=EUR,GBP,JPY,CNY,RUB,INR,BRL,CHF,CAD,AUD,KRW,TRY";
+  // Frankfurter (ECB-backed, free, no key)
+  const url = "https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR,GBP,JPY,CNY,INR,BRL,CHF,CAD,AUD,KRW,TRY,RUB";
   const data = (await safeFetchJson(url)) as { rates?: Record<string, number> } | null;
   if (!data?.rates) return [];
   const PAIRS: Array<[string, string]> = [
@@ -94,10 +94,14 @@ export async function fetchCommodities(): Promise<Quote[]> {
       clearTimeout(t);
       if (!res.ok) continue;
       const csv = await res.text();
-      const lines = csv.trim().split("\n");
-      if (lines.length < 2) continue;
-      const cols = lines[1].split(",");
-      const price = Number(cols[6]);
+      const lines = csv.trim().split("\n").filter((l) => l.trim());
+      // Stooq may or may not return a header. Find the first line with a numeric close (col 6).
+      let price = NaN;
+      for (const line of lines) {
+        const cols = line.split(",");
+        const p = Number(cols[6]);
+        if (Number.isFinite(p) && p > 0) { price = p; break; }
+      }
       if (!Number.isFinite(price)) continue;
       out.push({ symbol: s.sym, name: s.name, price, changePct: 0, unit: s.unit });
     } catch {}
@@ -129,10 +133,14 @@ export async function fetchIndices(): Promise<Quote[]> {
       clearTimeout(t);
       if (!res.ok) continue;
       const csv = await res.text();
-      const lines = csv.trim().split("\n");
-      if (lines.length < 2) continue;
-      const cols = lines[1].split(",");
-      const price = Number(cols[6]);
+      const lines = csv.trim().split("\n").filter((l) => l.trim());
+      // Stooq may or may not return a header. Find the first line with a numeric close (col 6).
+      let price = NaN;
+      for (const line of lines) {
+        const cols = line.split(",");
+        const p = Number(cols[6]);
+        if (Number.isFinite(p) && p > 0) { price = p; break; }
+      }
       if (!Number.isFinite(price)) continue;
       out.push({ symbol: s.sym, name: s.name, price, changePct: 0 });
     } catch {}

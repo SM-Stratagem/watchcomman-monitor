@@ -16,11 +16,11 @@ type GdeltArticle = {
 };
 
 const QUERIES = [
-  // Each query returns up to 75 articles
-  { q: 'theme:WB_2436_CONFLICT_AND_VIOLENCE sourcelang:eng', tag: "conflict", sev: "high" as const },
-  { q: 'theme:NATURAL_DISASTER sourcelang:eng', tag: "disaster", sev: "elevated" as const },
-  { q: 'theme:TERRORISM sourcelang:eng', tag: "terror", sev: "high" as const },
-  { q: 'theme:CYBER_ATTACK sourcelang:eng', tag: "cyber", sev: "elevated" as const },
+  { q: '(airstrike OR missile OR attack) sourcelang:eng', tag: "conflict", sev: "high" as const },
+  { q: '(earthquake OR flood OR cyclone OR tsunami) sourcelang:eng', tag: "disaster", sev: "elevated" as const },
+  { q: '(terror OR bombing OR hostage) sourcelang:eng', tag: "terror", sev: "high" as const },
+  { q: '(cyberattack OR ransomware OR "data breach") sourcelang:eng', tag: "cyber", sev: "elevated" as const },
+  { q: '(sanctions OR embargo) sourcelang:eng', tag: "policy", sev: "moderate" as const },
 ];
 
 function parseSeenDate(s: string): string {
