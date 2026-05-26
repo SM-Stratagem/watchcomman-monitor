@@ -128,6 +128,7 @@ export default async function Page() {
         <section style={{ padding: "0 28px 22px" }}>
           <div className="wm-shell" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
             <MarketsPanel title="Crypto" quotes={markets.crypto} accent="var(--accent-warm)" />
+            {markets.stocks.length > 0 ? <MarketsPanel title="Stocks" quotes={markets.stocks} accent="var(--accent)" /> : null}
             <MarketsPanel title="Indices" quotes={markets.indices} accent="var(--accent)" showChange={false} />
             <MarketsPanel title="Commodities" quotes={markets.commodities} accent="var(--accent-warm)" showChange={false} />
             <MarketsPanel title="FX (USD base)" quotes={markets.fx} accent="var(--accent-cool)" showChange={false} />

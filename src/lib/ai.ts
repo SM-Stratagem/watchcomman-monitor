@@ -5,6 +5,8 @@ import type { NewsRow, SignalRow } from "./dashboard";
 
 const MODEL_ANTHROPIC = "claude-haiku-4-5-20251001";
 const MODEL_OPENAI = "gpt-4o-mini";
+const MODEL_GROQ = "llama-3.3-70b-versatile";
+const MODEL_GEMINI = "gemini-2.5-flash";
 
 type CacheEntry = { value: AiBrief; expiresAt: number };
 const cache = new Map<string, CacheEntry>();
@@ -88,6 +90,55 @@ async function callOpenAI(prompt: string, key: string): Promise<string | null> {
   }
 }
 
+async function callGroq(prompt: string, key: string): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 15_000);
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: MODEL_GROQ,
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 800,
+        response_format: { type: "json_object" },
+      }),
+    });
+    clearTimeout(t);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    return data.choices?.[0]?.message?.content?.trim() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function callGemini(prompt: string, key: string): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 20_000);
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL_GEMINI}:generateContent?key=${key}`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          maxOutputTokens: 800,
+          responseMimeType: "application/json",
+        },
+      }),
+    });
+    clearTimeout(t);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function buildPrompt(news: NewsRow[], signals: SignalRow[]): string {
   const headlines = news.slice(0, 30).map((n) => `- [${n.sourceName}] ${n.title}`).join("\n");
   const sigText = signals.slice(0, 10).map((s) => `- [${s.severity.toUpperCase()}] ${s.title} (${s.country ?? s.region ?? ""})`).join("\n");
@@ -132,14 +183,22 @@ export async function getAiBrief(news: NewsRow[], signals: SignalRow[]): Promise
 
   const anth = process.env.ANTHROPIC_API_KEY;
   const oai = process.env.OPENAI_API_KEY;
-  if (!anth && !oai) {
+  const groq = process.env.GROQ_API_KEY;
+  const gem = process.env.GEMINI_API_KEY;
+  if (!anth && !oai && !groq && !gem) {
     const fb = fallbackBrief(news, signals);
     cache.set(cacheKey, { value: fb, expiresAt: Date.now() + TTL_MS });
     return fb;
   }
 
   const prompt = buildPrompt(news, signals);
-  const raw = anth ? await callAnthropic(prompt, anth) : await callOpenAI(prompt, oai!);
+  let raw: string | null = null;
+  let modelUsed: string | null = null;
+  // Preference: Groq (fastest free) → Gemini → Anthropic → OpenAI
+  if (groq) { raw = await callGroq(prompt, groq); modelUsed = raw ? "groq-llama-3.3-70b" : null; }
+  if (!raw && gem) { raw = await callGemini(prompt, gem); modelUsed = raw ? "gemini-2.5-flash" : modelUsed; }
+  if (!raw && anth) { raw = await callAnthropic(prompt, anth); modelUsed = raw ? "claude-haiku-4-5" : modelUsed; }
+  if (!raw && oai) { raw = await callOpenAI(prompt, oai); modelUsed = raw ? "gpt-4o-mini" : modelUsed; }
   if (!raw) {
     const fb = fallbackBrief(news, signals);
     cache.set(cacheKey, { value: fb, expiresAt: Date.now() + 60_000 });
@@ -162,7 +221,7 @@ export async function getAiBrief(news: NewsRow[], signals: SignalRow[]): Promise
         }))
       : fallbackBrief(news, signals).theaters,
     generated: new Date().toISOString(),
-    model: anth ? "claude-haiku-4-5" : "gpt-4o-mini",
+    model: modelUsed,
   };
   cache.set(cacheKey, { value: brief, expiresAt: Date.now() + TTL_MS });
   return brief;

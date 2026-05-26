@@ -19,10 +19,11 @@ const TTL_MS = 90_000;
 
 export async function getFlights(): Promise<Flight[]> {
   if (cache && cache.expiresAt > Date.now()) return cache.items;
-  const user = process.env.OPENSKY_USERNAME;
-  const pass = process.env.OPENSKY_PASSWORD;
+  // Accept either OPENSKY_API_KEY (UUID-as-username, blank password) or USERNAME+PASSWORD pair.
+  const user = process.env.OPENSKY_USERNAME ?? process.env.OPENSKY_API_KEY;
+  const pass = process.env.OPENSKY_PASSWORD ?? "";
   const headers: Record<string, string> = { "user-agent": "watchcomman-monitor/1.0" };
-  if (user && pass) {
+  if (user) {
     headers.authorization = "Basic " + Buffer.from(`${user}:${pass}`).toString("base64");
   }
   try {

@@ -186,6 +186,40 @@ export async function fetchIndices(): Promise<Quote[]> {
   return out;
 }
 
+// Major equities via Alpha Vantage if ALPHAVANTAGE_API_KEY set.
+// Free tier: 25 req/day total, so cache aggressively.
+export async function fetchStocks(): Promise<Quote[]> {
+  const key = process.env.ALPHAVANTAGE_API_KEY;
+  if (!key) return [];
+  const SYMBOLS: Array<{ sym: string; name: string }> = [
+    { sym: "AAPL", name: "Apple" },
+    { sym: "MSFT", name: "Microsoft" },
+    { sym: "NVDA", name: "NVIDIA" },
+    { sym: "GOOGL", name: "Alphabet" },
+    { sym: "AMZN", name: "Amazon" },
+    { sym: "META", name: "Meta" },
+    { sym: "TSLA", name: "Tesla" },
+  ];
+  const out: Quote[] = [];
+  for (const s of SYMBOLS) {
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${s.sym}&apikey=${key}`, { signal: controller.signal });
+      clearTimeout(t);
+      if (!res.ok) continue;
+      const data = (await res.json()) as { "Global Quote"?: Record<string, string> };
+      const q = data["Global Quote"];
+      if (!q) continue;
+      const price = Number(q["05. price"]);
+      const change = Number(q["10. change percent"]?.replace("%", ""));
+      if (!Number.isFinite(price) || price <= 0) continue;
+      out.push({ symbol: s.sym, name: s.name, price, changePct: Number.isFinite(change) ? change : 0, unit: "USD" });
+    } catch {}
+  }
+  return out;
+}
+
 // In-memory cache to avoid hitting Stooq/CoinGecko on every page render
 let cache: { snap: MarketSnapshot; expiresAt: number } | null = null;
 const TTL_MS = 90_000;
@@ -195,18 +229,20 @@ export type MarketSnapshot = {
   fx: Quote[];
   commodities: Quote[];
   indices: Quote[];
+  stocks: Quote[];
   generated: string;
 };
 
 export async function getMarketSnapshot(): Promise<MarketSnapshot> {
   if (cache && cache.expiresAt > Date.now()) return cache.snap;
-  const [crypto, fx, commodities, indices] = await Promise.all([
+  const [crypto, fx, commodities, indices, stocks] = await Promise.all([
     fetchCrypto().catch(() => []),
     fetchFx().catch(() => []),
     fetchCommodities().catch(() => []),
     fetchIndices().catch(() => []),
+    fetchStocks().catch(() => []),
   ]);
-  const snap = { crypto, fx, commodities, indices, generated: new Date().toISOString() };
+  const snap = { crypto, fx, commodities, indices, stocks, generated: new Date().toISOString() };
   cache = { snap, expiresAt: Date.now() + TTL_MS };
   return snap;
 }
