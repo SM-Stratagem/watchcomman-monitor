@@ -1,6 +1,6 @@
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { getDb } from "./db";
-import { categoryStats, countryStats, ingestRuns, regionStats, signals } from "../../db/schema";
+import { categoryStats, countryStats, ingestRuns, news, regionStats, signals } from "../../db/schema";
 import { buildSeedSignals } from "./seed-signals";
 
 export type SignalRow = {
@@ -252,6 +252,77 @@ function filterInMem(rows: SignalRow[], opts: Parameters<typeof getSignalsFilter
     if (cutoff != null && new Date(s.occurredAt).getTime() < cutoff) return false;
     return true;
   }).slice(0, opts.limit ?? 100);
+}
+
+export type NewsRow = {
+  id: number;
+  externalKey: string;
+  sourceSlug: string;
+  sourceName: string;
+  region: string;
+  title: string;
+  summary: string | null;
+  link: string;
+  author: string | null;
+  publishedAt: string;
+};
+
+export async function getNews(opts: {
+  region?: string;
+  sources?: string[];
+  sinceHours?: number;
+  limit?: number;
+}): Promise<NewsRow[]> {
+  if (!process.env.DATABASE_URL) return [];
+  try {
+    const db = getDb();
+    const conds = [];
+    if (opts.region) conds.push(eq(news.region, opts.region));
+    if (opts.sources?.length) conds.push(inArray(news.sourceSlug, opts.sources));
+    if (opts.sinceHours) {
+      const cutoff = new Date(Date.now() - opts.sinceHours * 60 * 60 * 1000);
+      conds.push(gte(news.publishedAt, cutoff));
+    }
+    const where = conds.length ? and(...conds) : undefined;
+    const rows = await db
+      .select()
+      .from(news)
+      .where(where)
+      .orderBy(desc(news.publishedAt))
+      .limit(opts.limit ?? 50);
+    return rows.map((r) => ({
+      id: r.id,
+      externalKey: r.externalKey,
+      sourceSlug: r.sourceSlug,
+      sourceName: r.sourceName,
+      region: r.region,
+      title: r.title,
+      summary: r.summary,
+      link: r.link,
+      author: r.author,
+      publishedAt: r.publishedAt.toISOString(),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function getNewsCountsByRegion(): Promise<Record<string, number>> {
+  if (!process.env.DATABASE_URL) return {};
+  try {
+    const db = getDb();
+    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const rows = await db
+      .select({ region: news.region, count: sql<number>`count(*)::int` })
+      .from(news)
+      .where(gte(news.publishedAt, cutoff))
+      .groupBy(news.region);
+    const out: Record<string, number> = {};
+    for (const r of rows) out[r.region] = r.count;
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 export async function getTimeBuckets(opts: {

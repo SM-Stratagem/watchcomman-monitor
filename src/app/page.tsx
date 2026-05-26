@@ -48,7 +48,7 @@ export default async function Page() {
               disaster feeds — alongside our independent monitors — into one calm, cinematic dashboard.
             </p>
             <div className="wm-fade-up wm-delay-3" style={{ marginTop: 36, display: "flex", flexWrap: "wrap", gap: 14 }}>
-              <Link href="/signals" style={{
+              <Link href="/dashboard" style={{
                 display: "inline-flex", alignItems: "center", gap: 10,
                 padding: "14px 22px", borderRadius: 999,
                 background: "linear-gradient(180deg, #f5f7ff, #c6cce0)",
@@ -56,7 +56,13 @@ export default async function Page() {
                 boxShadow: "0 18px 50px rgba(245,247,255,0.18)",
                 border: "1px solid rgba(255,255,255,0.4)",
               }}>
-                Open the live stream <span aria-hidden>→</span>
+                Open OSINT dashboard <span aria-hidden>→</span>
+              </Link>
+              <Link href="/signals" className="wm-glass" style={{
+                padding: "13px 20px", fontSize: 14, color: "var(--ink-0)",
+                borderRadius: 999, display: "inline-flex", gap: 10, alignItems: "center",
+              }}>
+                Live signals stream
               </Link>
               <a href="#globe" className="wm-glass" style={{
                 padding: "13px 20px", fontSize: 14, color: "var(--ink-0)",

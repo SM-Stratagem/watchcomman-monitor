@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { getDb } from "./db";
-import { categoryStats, countryStats, ingestRuns, regionStats, signals } from "../../db/schema";
+import { categoryStats, countryStats, ingestRuns, news, regionStats, signals } from "../../db/schema";
 import { buildSeedSignals } from "./seed-signals";
 import type { NormalizedSignal } from "./feeds/types";
 import { fetchUsgs } from "./feeds/usgs";
@@ -8,6 +8,7 @@ import { fetchEonet } from "./feeds/eonet";
 import { fetchReliefWeb } from "./feeds/reliefweb";
 import { fetchGdacs } from "./feeds/gdacs";
 import { fetchWhoDon } from "./feeds/who";
+import { fetchAllNews } from "./feeds/rss";
 
 export type IngestResult = {
   runId: number;
@@ -199,6 +200,51 @@ export async function ingestSignals(): Promise<IngestResult> {
     errors++;
   }
 
+  // News ingest (RSS feeds, 200+ sources)
+  let newsInserted = 0;
+  let newsOk = 0;
+  let newsFailed = 0;
+  try {
+    const newsRes = await fetchAllNews({ concurrency: 12, max: 4000 });
+    newsOk = newsRes.okSources;
+    newsFailed = newsRes.failedSources;
+    // Batch upsert
+    for (const item of newsRes.items) {
+      try {
+        await db.insert(news).values({
+          externalKey: item.externalKey,
+          sourceSlug: item.sourceSlug,
+          sourceName: item.sourceName,
+          region: item.region,
+          title: item.title,
+          summary: item.summary,
+          link: item.link,
+          author: item.author,
+          publishedAt: new Date(item.publishedAt),
+        }).onConflictDoUpdate({
+          target: news.externalKey,
+          set: {
+            title: item.title,
+            summary: item.summary,
+            link: item.link,
+            publishedAt: new Date(item.publishedAt),
+          },
+        });
+        newsInserted++;
+      } catch {
+        errors++;
+      }
+    }
+
+    // Prune old news (keep ~30 days)
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    try {
+      await db.execute(sql`DELETE FROM ${news} WHERE published_at < ${cutoff.toISOString()}`);
+    } catch {}
+  } catch {
+    errors++;
+  }
+
   const endedAt = new Date();
   await db
     .update(ingestRuns)
@@ -208,7 +254,7 @@ export async function ingestSignals(): Promise<IngestResult> {
       updated,
       total: all.length,
       errors,
-      notes: JSON.stringify(bySource).slice(0, 800),
+      notes: JSON.stringify({ bySource, news: { inserted: newsInserted, okSources: newsOk, failedSources: newsFailed } }).slice(0, 800),
     })
     .where(sql`${ingestRuns.id} = ${run.id}`);
 

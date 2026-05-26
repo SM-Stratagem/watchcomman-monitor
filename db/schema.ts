@@ -78,6 +78,30 @@ export const categoryStats = pgTable(
   (table) => [uniqueIndex("wm_category_stats_category_idx").on(table.category)],
 );
 
+// News article — one row per article surfaced from an RSS feed.
+export const news = pgTable(
+  "wm_news",
+  {
+    id: serial("id").primaryKey(),
+    externalKey: varchar("external_key", { length: 400 }).notNull(),
+    sourceSlug: varchar("source_slug", { length: 80 }).notNull(),
+    sourceName: varchar("source_name", { length: 120 }).notNull(),
+    region: varchar("region", { length: 32 }).notNull(),
+    title: text("title").notNull(),
+    summary: text("summary"),
+    link: text("link").notNull(),
+    author: varchar("author", { length: 200 }),
+    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("wm_news_external_key_idx").on(table.externalKey),
+    index("wm_news_region_idx").on(table.region),
+    index("wm_news_source_idx").on(table.sourceSlug),
+    index("wm_news_published_idx").on(table.publishedAt),
+  ],
+);
+
 export const ingestRuns = pgTable("wm_ingest_runs", {
   id: serial("id").primaryKey(),
   startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),

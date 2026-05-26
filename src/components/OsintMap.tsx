@@ -1,0 +1,232 @@
+"use client";
+import { useMemo, useState } from "react";
+import type { SignalRow } from "@/lib/dashboard";
+import { LAYERS, type MapMarker } from "@/lib/map-layers";
+import { severityColor } from "@/lib/format";
+
+const W = 1600;
+const H = 760;
+
+function project(lat: number, lng: number): [number, number] {
+  const x = ((lng + 180) / 360) * W;
+  const y = ((90 - lat) / 180) * H;
+  return [x, y];
+}
+
+const SEV_R: Record<string, number> = { critical: 9, high: 7, elevated: 5.5, moderate: 4.4, low: 3.4 };
+
+export function OsintMap({ signals }: { signals: SignalRow[] }) {
+  const [activeLayers, setActiveLayers] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(LAYERS.map((l) => [l.slug, l.defaultOn])),
+  );
+  const [hover, setHover] = useState<{ kind: "signal"; sig: SignalRow } | { kind: "marker"; m: MapMarker; layer: string } | null>(null);
+  const [sevFilter, setSevFilter] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+
+  const visibleSignals = useMemo(() => signals.filter((s) => {
+    if (s.latitude == null || s.longitude == null) return false;
+    if (sevFilter && s.severity !== sevFilter) return false;
+    if (query) {
+      const q = query.toLowerCase();
+      if (!(s.title.toLowerCase().includes(q) || (s.country ?? "").toLowerCase().includes(q) || (s.region ?? "").toLowerCase().includes(q))) {
+        return false;
+      }
+    }
+    return true;
+  }), [signals, sevFilter, query]);
+
+  const totalActiveCount = visibleSignals.length;
+  const layerCount = LAYERS.filter((l) => activeLayers[l.slug]).reduce((sum, l) => sum + l.data.length, 0);
+
+  return (
+    <div style={{ position: "relative", borderRadius: 14, overflow: "hidden", border: "1px solid var(--line)", background: "radial-gradient(ellipse at center, #0a1024 0%, #04060c 60%)" }}>
+      {/* Top bar */}
+      <div style={{
+        position: "absolute", top: 0, left: 0, right: 0, zIndex: 5,
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        padding: "10px 14px", gap: 10, flexWrap: "wrap",
+        background: "linear-gradient(180deg, rgba(4,6,12,0.85), rgba(4,6,12,0))",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span className="wm-mono" style={{ fontSize: 10, color: "var(--accent)", letterSpacing: "0.22em", textTransform: "uppercase" }}>● LIVE</span>
+          <span className="wm-mono" style={{ fontSize: 10, color: "var(--ink-3)", letterSpacing: "0.18em" }}>
+            GLOBAL SITUATION · {totalActiveCount} SIGNALS · {layerCount} LAYER ITEMS
+          </span>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search country, region, keyword…"
+            className="wm-mono"
+            style={{
+              background: "rgba(0,0,0,0.4)", border: "1px solid var(--line-strong)",
+              padding: "5px 12px", borderRadius: 999, color: "var(--ink-0)",
+              fontSize: 11, letterSpacing: "0.1em", width: 220,
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Left layer panel */}
+      <div style={{
+        position: "absolute", top: 56, left: 10, zIndex: 4,
+        background: "rgba(4,6,12,0.78)", border: "1px solid var(--line)",
+        borderRadius: 10, padding: "12px 12px 10px", minWidth: 200,
+        backdropFilter: "blur(8px)",
+      }}>
+        <div className="wm-mono" style={{ fontSize: 10, color: "var(--ink-3)", letterSpacing: "0.22em", marginBottom: 10 }}>LAYERS</div>
+        <div style={{ display: "grid", gap: 6 }}>
+          {LAYERS.map((l) => (
+            <label key={l.slug} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 11 }}>
+              <input
+                type="checkbox"
+                checked={!!activeLayers[l.slug]}
+                onChange={(e) => setActiveLayers((s) => ({ ...s, [l.slug]: e.target.checked }))}
+                style={{ accentColor: l.color }}
+              />
+              <span style={{ color: l.color, fontWeight: 600, width: 12 }}>{l.glyph}</span>
+              <span className="wm-mono" style={{ color: "var(--ink-1)", letterSpacing: "0.1em", fontSize: 10, textTransform: "uppercase" }}>
+                {l.label}
+              </span>
+              <span className="wm-mono" style={{ marginLeft: "auto", fontSize: 9, color: "var(--ink-3)" }}>{l.data.length}</span>
+            </label>
+          ))}
+        </div>
+        <div className="wm-mono" style={{ fontSize: 9, color: "var(--ink-3)", letterSpacing: "0.2em", marginTop: 12 }}>SEVERITY</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+          {[null, "critical", "high", "elevated", "moderate", "low"].map((s, i) => (
+            <button
+              key={s ?? `all-${i}`}
+              onClick={() => setSevFilter(s)}
+              className="wm-mono"
+              style={{
+                padding: "3px 7px", borderRadius: 999, cursor: "pointer", border: "1px solid",
+                borderColor: sevFilter === s ? severityColor(s ?? "low") : "rgba(255,255,255,0.1)",
+                background: sevFilter === s ? "rgba(255,255,255,0.06)" : "transparent",
+                color: sevFilter === s ? severityColor(s ?? "low") : "var(--ink-2)",
+                fontSize: 8, letterSpacing: "0.14em", textTransform: "uppercase",
+              }}
+            >{s ?? "All"}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* MAP SVG */}
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }}>
+        <defs>
+          <radialGradient id="signal-glow">
+            <stop offset="0%" stopOpacity="0.7" />
+            <stop offset="100%" stopOpacity="0" />
+          </radialGradient>
+        </defs>
+
+        {/* Grid */}
+        {[15, 30, 45, 60, 75].map((g) => (
+          <g key={g} stroke="rgba(255,255,255,0.04)" strokeWidth="0.5">
+            <line x1="0" x2={W} y1={(90 - g) / 180 * H} y2={(90 - g) / 180 * H} />
+            <line x1="0" x2={W} y1={(90 + g) / 180 * H} y2={(90 + g) / 180 * H} />
+          </g>
+        ))}
+        {Array.from({ length: 11 }).map((_, i) => {
+          const g = -150 + i * 30;
+          return <line key={g} stroke="rgba(255,255,255,0.04)" strokeWidth="0.5"
+            x1={((g + 180) / 360) * W} x2={((g + 180) / 360) * W} y1="0" y2={H} />;
+        })}
+        <line x1="0" x2={W} y1={H / 2} y2={H / 2} stroke="rgba(255,255,255,0.08)" strokeWidth="0.8" />
+        <line x1={W / 2} x2={W / 2} y1="0" y2={H} stroke="rgba(255,255,255,0.08)" strokeWidth="0.8" />
+
+        {/* Layers */}
+        {LAYERS.filter((l) => activeLayers[l.slug]).map((l) => (
+          <g key={l.slug}>
+            {l.data.map((m) => {
+              const [x, y] = project(m.coords[1], m.coords[0]);
+              const isHover = hover?.kind === "marker" && hover.m.id === m.id;
+              return (
+                <g key={m.id}
+                  onMouseEnter={() => setHover({ kind: "marker", m, layer: l.label })}
+                  onMouseLeave={() => setHover((h) => (h?.kind === "marker" && h.m.id === m.id ? null : h))}
+                  style={{ cursor: "pointer" }}
+                >
+                  <circle cx={x} cy={y} r={isHover ? 10 : 6} fill={l.color} opacity="0.15" />
+                  <text x={x} y={y + 3} fontSize="10" textAnchor="middle" fill={l.color} fontWeight="700">{l.glyph}</text>
+                </g>
+              );
+            })}
+          </g>
+        ))}
+
+        {/* Signals */}
+        {visibleSignals.map((s) => {
+          const [x, y] = project(s.latitude!, s.longitude!);
+          const r = SEV_R[s.severity] ?? 4;
+          const c = severityColor(s.severity);
+          const isHover = hover?.kind === "signal" && hover.sig.id === s.id;
+          return (
+            <g key={s.id}
+              onMouseEnter={() => setHover({ kind: "signal", sig: s })}
+              onMouseLeave={() => setHover((h) => (h?.kind === "signal" && h.sig.id === s.id ? null : h))}
+              style={{ cursor: "pointer" }}
+            >
+              <circle cx={x} cy={y} r={r * 2.6} fill={c} opacity={isHover ? 0.22 : 0.10} />
+              <circle cx={x} cy={y} r={r * 1.5} fill={c} opacity="0.24" />
+              <circle cx={x} cy={y} r={r} fill={c} stroke="#fff" strokeOpacity="0.7" strokeWidth="0.6" />
+            </g>
+          );
+        })}
+      </svg>
+
+      {/* Legend (bottom) */}
+      <div style={{
+        position: "absolute", bottom: 10, left: 10, right: 10, zIndex: 3,
+        display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center",
+        padding: "8px 14px", background: "rgba(4,6,12,0.7)", borderRadius: 10, border: "1px solid var(--line)",
+        backdropFilter: "blur(6px)",
+      }}>
+        {(["critical", "high", "elevated", "moderate", "low"] as const).map((s) => (
+          <span key={s} className="wm-mono" style={{ fontSize: 9, color: "var(--ink-2)", letterSpacing: "0.18em", textTransform: "uppercase", display: "inline-flex", gap: 6, alignItems: "center" }}>
+            <span style={{ width: 8, height: 8, borderRadius: 50, background: severityColor(s), boxShadow: `0 0 8px ${severityColor(s)}` }} /> {s}
+          </span>
+        ))}
+        <span style={{ flex: 1 }} />
+        {LAYERS.filter((l) => activeLayers[l.slug]).map((l) => (
+          <span key={l.slug} className="wm-mono" style={{ fontSize: 9, color: l.color, letterSpacing: "0.18em", textTransform: "uppercase" }}>
+            {l.glyph} {l.label}
+          </span>
+        ))}
+      </div>
+
+      {/* Hover detail card */}
+      {hover ? (
+        <div className="wm-glass" style={{
+          position: "absolute", right: 16, top: 56, maxWidth: 360, padding: 14,
+          borderRadius: 12, zIndex: 6,
+        }}>
+          {hover.kind === "signal" ? (
+            <>
+              <div className="wm-mono" style={{ fontSize: 10, color: severityColor(hover.sig.severity), letterSpacing: "0.2em", textTransform: "uppercase" }}>
+                ● {hover.sig.severity} · {hover.sig.category}
+              </div>
+              <div style={{ marginTop: 6, color: "var(--ink-0)", fontSize: 13, lineHeight: 1.4 }}>
+                {hover.sig.sourceUrl ? <a href={hover.sig.sourceUrl} target="_blank" rel="noopener noreferrer">{hover.sig.title}</a> : hover.sig.title}
+              </div>
+              {hover.sig.summary ? <div style={{ marginTop: 6, color: "var(--ink-2)", fontSize: 12, lineHeight: 1.5 }}>{hover.sig.summary}</div> : null}
+              <div className="wm-mono" style={{ marginTop: 8, fontSize: 9, color: "var(--ink-3)", letterSpacing: "0.18em" }}>
+                {hover.sig.country ?? hover.sig.region ?? "—"} · {new Date(hover.sig.occurredAt).toLocaleString()}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="wm-mono" style={{ fontSize: 10, color: "var(--accent)", letterSpacing: "0.2em", textTransform: "uppercase" }}>
+                {hover.layer}
+              </div>
+              <div style={{ marginTop: 6, color: "var(--ink-0)", fontSize: 14 }}>{hover.m.name}</div>
+              {hover.m.country ? <div style={{ marginTop: 4, color: "var(--ink-2)", fontSize: 12 }}>{hover.m.country}</div> : null}
+              {hover.m.note ? <div style={{ marginTop: 6, color: "var(--ink-3)", fontSize: 11 }}>{hover.m.note}</div> : null}
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}

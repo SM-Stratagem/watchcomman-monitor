@@ -77,11 +77,12 @@ export function Header() {
             color: "var(--ink-1)",
           }}
         >
+          <Link href="/dashboard" className="wm-nav-link">Dashboard</Link>
           <Link href="/signals" className="wm-nav-link">Signals</Link>
           <Link href="/map" className="wm-nav-link">Map</Link>
           <Link href="/countries" className="wm-nav-link">Countries</Link>
+          <Link href="/sources" className="wm-nav-link">Sources</Link>
           <Link href="/api-docs" className="wm-nav-link">API</Link>
-          <Link href="/about" className="wm-nav-link">About</Link>
           <span className="wm-pill" style={{ fontSize: 10 }}>
             <span className="wm-dot" /> LIVE
           </span>
