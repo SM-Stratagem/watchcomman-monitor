@@ -8,6 +8,7 @@ import { fetchEonet } from "./feeds/eonet";
 import { fetchReliefWeb } from "./feeds/reliefweb";
 import { fetchGdacs } from "./feeds/gdacs";
 import { fetchWhoDon } from "./feeds/who";
+import { fetchGdelt } from "./feeds/gdelt";
 import { fetchAllNews } from "./feeds/rss";
 
 export type IngestResult = {
@@ -35,6 +36,7 @@ async function fetchAll(): Promise<NormalizedSignal[]> {
     fetchReliefWeb(),
     fetchGdacs(),
     fetchWhoDon(),
+    fetchGdelt(),
   ];
 
   // Optional sibling-monitor feeds.
