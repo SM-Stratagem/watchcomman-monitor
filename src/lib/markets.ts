@@ -186,8 +186,10 @@ export async function fetchIndices(): Promise<Quote[]> {
   return out;
 }
 
-// Major equities via Alpha Vantage if ALPHAVANTAGE_API_KEY set.
-// Free tier: 25 req/day total, so cache aggressively.
+// Per-symbol day-long cache (Alpha Vantage free tier limits us to 25/day total).
+const STOCKS_CACHE = new Map<string, { quote: Quote; expiresAt: number }>();
+const STOCKS_TTL_MS = 30 * 60 * 1000; // 30 min — Alpha Vantage doesn't update intraday on free anyway
+
 export async function fetchStocks(): Promise<Quote[]> {
   const key = process.env.ALPHAVANTAGE_API_KEY;
   if (!key) return [];
@@ -202,19 +204,27 @@ export async function fetchStocks(): Promise<Quote[]> {
   ];
   const out: Quote[] = [];
   for (const s of SYMBOLS) {
+    const cached = STOCKS_CACHE.get(s.sym);
+    if (cached && cached.expiresAt > Date.now()) {
+      out.push(cached.quote);
+      continue;
+    }
     try {
       const controller = new AbortController();
       const t = setTimeout(() => controller.abort(), 5000);
       const res = await fetch(`https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${s.sym}&apikey=${key}`, { signal: controller.signal });
       clearTimeout(t);
       if (!res.ok) continue;
-      const data = (await res.json()) as { "Global Quote"?: Record<string, string> };
+      const data = (await res.json()) as { "Global Quote"?: Record<string, string>; Note?: string; Information?: string };
+      if (data.Note || data.Information) break; // rate limit hit — stop trying
       const q = data["Global Quote"];
       if (!q) continue;
       const price = Number(q["05. price"]);
       const change = Number(q["10. change percent"]?.replace("%", ""));
       if (!Number.isFinite(price) || price <= 0) continue;
-      out.push({ symbol: s.sym, name: s.name, price, changePct: Number.isFinite(change) ? change : 0, unit: "USD" });
+      const quote = { symbol: s.sym, name: s.name, price, changePct: Number.isFinite(change) ? change : 0, unit: "USD" };
+      STOCKS_CACHE.set(s.sym, { quote, expiresAt: Date.now() + STOCKS_TTL_MS });
+      out.push(quote);
     } catch {}
   }
   return out;
