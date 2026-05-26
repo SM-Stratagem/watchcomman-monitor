@@ -37,7 +37,7 @@ export async function fetchCrypto(): Promise<Quote[]> {
     }
     if (out.length) return out;
   }
-  // Fallback: CoinCap (free, often allows cloud IPs)
+  // Fallback 1: CoinCap (free, often allows cloud IPs)
   const ccUrl = "https://api.coincap.io/v2/assets?limit=20";
   const cc = (await safeFetchJson(ccUrl, { timeoutMs: 5000 })) as { data?: Array<{ id: string; symbol: string; name: string; priceUsd: string; changePercent24Hr: string }> } | null;
   if (cc?.data?.length) {
@@ -47,9 +47,39 @@ export async function fetchCrypto(): Promise<Quote[]> {
       if (!want.has(a.id)) continue;
       out.push({ symbol: a.symbol, name: a.name, price: Number(a.priceUsd), changePct: Number(a.changePercent24Hr), unit: "USD" });
     }
-    return out;
+    if (out.length) return out;
   }
-  return [];
+  // Fallback 2: Binance public ticker (no auth)
+  const PAIRS: Array<[string, string, string]> = [
+    ["BTCUSDT", "BTC", "Bitcoin"], ["ETHUSDT", "ETH", "Ethereum"], ["BNBUSDT", "BNB", "BNB"],
+    ["SOLUSDT", "SOL", "Solana"], ["XRPUSDT", "XRP", "XRP"], ["ADAUSDT", "ADA", "Cardano"],
+    ["TRXUSDT", "TRX", "Tron"], ["DOGEUSDT", "DOGE", "Dogecoin"],
+  ];
+  const binance = (await safeFetchJson("https://api.binance.com/api/v3/ticker/24hr", { timeoutMs: 5000 })) as Array<{ symbol: string; lastPrice: string; priceChangePercent: string }> | null;
+  if (Array.isArray(binance)) {
+    const map = new Map(binance.map((b) => [b.symbol, b]));
+    const out: Quote[] = [];
+    for (const [pair, sym, name] of PAIRS) {
+      const t = map.get(pair);
+      if (!t) continue;
+      out.push({ symbol: sym, name, price: Number(t.lastPrice), changePct: Number(t.priceChangePercent), unit: "USD" });
+    }
+    if (out.length) return out;
+  }
+  // Fallback 3: Yahoo crypto endpoint
+  const YPAIRS: Array<[string, string, string]> = [
+    ["BTC-USD", "BTC", "Bitcoin"], ["ETH-USD", "ETH", "Ethereum"], ["BNB-USD", "BNB", "BNB"],
+    ["SOL-USD", "SOL", "Solana"], ["XRP-USD", "XRP", "XRP"], ["ADA-USD", "ADA", "Cardano"],
+    ["TRX-USD", "TRX", "Tron"], ["DOGE-USD", "DOGE", "Dogecoin"],
+  ];
+  const yResults = await Promise.all(YPAIRS.map(([sym]) => fetchYahooOne(sym)));
+  const out: Quote[] = [];
+  for (let i = 0; i < YPAIRS.length; i++) {
+    const p = yResults[i];
+    if (p == null) continue;
+    out.push({ symbol: YPAIRS[i][1], name: YPAIRS[i][2], price: p, changePct: 0, unit: "USD" });
+  }
+  return out;
 }
 
 export async function fetchFx(): Promise<Quote[]> {
