@@ -20,6 +20,7 @@ import { AdversaryTracker, ADVERSARIES } from "@/components/AdversaryTracker";
 import { MilitaryAirPanel } from "@/components/MilitaryAirPanel";
 import { MaritimePanel } from "@/components/MaritimePanel";
 import { WarningLevelBadge } from "@/components/WarningLevelBadge";
+import { LiveIntakeBar } from "@/components/LiveIntakeBar";
 import { computeWarningLevel } from "@/lib/warning-level";
 import { getDashboardSnapshot, getNews, getNewsCountsByRegion, getTimeBuckets } from "@/lib/dashboard";
 import { getMarketSnapshot } from "@/lib/markets";
@@ -113,6 +114,11 @@ export default async function Page() {
               <div style={{ marginTop: 2 }}>RISK {riskScore} · {snap.totals.highSeverity} HIGH+</div>
             </div>
           </div>
+        </section>
+
+        {/* LIVE INTAKE BAR */}
+        <section style={{ padding: "0 28px 14px" }}>
+          <div className="wm-shell"><LiveIntakeBar /></div>
         </section>
 
         {/* OSINT MAP */}

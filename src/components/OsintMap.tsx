@@ -4,6 +4,7 @@ import type { SignalRow } from "@/lib/dashboard";
 import { LAYERS, type MapMarker } from "@/lib/map-layers";
 import { severityColor } from "@/lib/format";
 import { LiveVesselsOverlay } from "./LiveVesselsOverlay";
+import { CHOKEPOINTS } from "@/lib/maritime";
 
 const W = 1800;
 const H = 900;
@@ -32,8 +33,10 @@ export function OsintMap({ signals }: { signals: SignalRow[] }) {
   const [sevFilter, setSevFilter] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [flights, setFlights] = useState<Flight[]>([]);
-  const [showFlights, setShowFlights] = useState(false);
+  const [showFlights, setShowFlights] = useState(true);
+  const [showShips, setShowShips] = useState(true);
   const [borderPaths, setBorderPaths] = useState<string>("");
+  const [flightsUpdatedAt, setFlightsUpdatedAt] = useState<number>(0);
 
   // Lazy-load country borders
   useEffect(() => {
@@ -50,7 +53,7 @@ export function OsintMap({ signals }: { signals: SignalRow[] }) {
     return () => { cancelled = true; };
   }, []);
 
-  // Lazy-load flights (only when toggled on)
+  // Live flights — refresh every 45s for a steadier "live" feel.
   useEffect(() => {
     if (!showFlights) return;
     let cancelled = false;
@@ -59,11 +62,16 @@ export function OsintMap({ signals }: { signals: SignalRow[] }) {
         const res = await fetch("/api/v1/flights");
         if (!res.ok) return;
         const d = await res.json();
-        if (!cancelled) setFlights(d.flights ?? []);
+        if (!cancelled) {
+          // eslint-disable-next-line react-hooks/set-state-in-effect
+          setFlights(d.flights ?? []);
+          // eslint-disable-next-line react-hooks/set-state-in-effect
+          setFlightsUpdatedAt(Date.now());
+        }
       } catch {}
     };
     tick();
-    const t = setInterval(tick, 90_000);
+    const t = setInterval(tick, 45_000);
     return () => { cancelled = true; clearInterval(t); };
   }, [showFlights]);
 
@@ -81,6 +89,13 @@ export function OsintMap({ signals }: { signals: SignalRow[] }) {
 
   const totalActiveCount = visibleSignals.length;
   const layerCount = LAYERS.filter((l) => activeLayers[l.slug]).reduce((sum, l) => sum + l.data.length, 0);
+  // 1Hz ticker so the "Xs ago" updates between fetches without re-running the polling effect.
+  const [nowMs, setNowMs] = useState<number>(0);
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const lastFlightUpdate = flightsUpdatedAt && nowMs ? Math.max(0, Math.floor((nowMs - flightsUpdatedAt) / 1000)) : 0;
 
   return (
     <div style={{ position: "relative", borderRadius: 14, overflow: "hidden", border: "1px solid var(--line)", background: "radial-gradient(ellipse at center, #0a1024 0%, #04060c 60%)" }}>
@@ -91,10 +106,17 @@ export function OsintMap({ signals }: { signals: SignalRow[] }) {
         padding: "10px 14px", gap: 10, flexWrap: "wrap",
         background: "linear-gradient(180deg, rgba(4,6,12,0.85), rgba(4,6,12,0))",
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span className="wm-mono" style={{ fontSize: 10, color: "var(--accent)", letterSpacing: "0.22em" }}>● LIVE</span>
-          <span className="wm-mono" style={{ fontSize: 10, color: "var(--ink-3)", letterSpacing: "0.18em" }}>
-            GLOBAL SITUATION · {totalActiveCount} SIGNALS · {layerCount} LAYER ITEMS{showFlights ? ` · ${flights.length} AIRCRAFT` : ""}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <span className="wm-pulse" aria-hidden style={{ background: "var(--accent)" }} />
+            <span className="wm-mono" style={{ fontSize: 10, color: "var(--accent)", letterSpacing: "0.22em" }}>LIVE INTAKE</span>
+          </span>
+          <span className="wm-mono" style={{ fontSize: 10, color: "var(--ink-1)", letterSpacing: "0.18em" }}>
+            ✈ <strong style={{ color: "var(--accent-cool)" }}>{flights.length.toLocaleString()}</strong> AIRCRAFT
+            {" · "}🚢 <strong style={{ color: "var(--accent-warm)" }}>{showShips ? CHOKEPOINTS.length : 0}</strong> CHOKEPOINTS
+            {" · "}● <strong style={{ color: severityColor("high") }}>{totalActiveCount}</strong> SIGNALS
+            {" · "}📡 <strong>{layerCount}</strong> STRATEGIC SITES
+            {showFlights && lastFlightUpdate > 0 ? ` · ↻ ${lastFlightUpdate}s ago` : ""}
           </span>
         </div>
         <input
@@ -140,6 +162,12 @@ export function OsintMap({ signals }: { signals: SignalRow[] }) {
             <span className="wm-mono" style={{ color: "var(--ink-1)", letterSpacing: "0.1em", fontSize: 10, textTransform: "uppercase" }}>Live flights</span>
             <span className="wm-mono" style={{ marginLeft: "auto", fontSize: 9, color: "var(--ink-3)" }}>{flights.length || "—"}</span>
           </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 11 }}>
+            <input type="checkbox" checked={showShips} onChange={(e) => setShowShips(e.target.checked)} style={{ accentColor: "var(--accent-warm)" }} />
+            <span style={{ color: "var(--accent-warm)", fontWeight: 600, width: 12 }}>🚢</span>
+            <span className="wm-mono" style={{ color: "var(--ink-1)", letterSpacing: "0.1em", fontSize: 10, textTransform: "uppercase" }}>Chokepoints</span>
+            <span className="wm-mono" style={{ marginLeft: "auto", fontSize: 9, color: "var(--ink-3)" }}>{CHOKEPOINTS.length}</span>
+          </label>
         </div>
         <div className="wm-mono" style={{ fontSize: 9, color: "var(--ink-3)", letterSpacing: "0.2em", marginTop: 12 }}>SEVERITY</div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
@@ -184,17 +212,33 @@ export function OsintMap({ signals }: { signals: SignalRow[] }) {
           </g>
         ) : null}
 
-        {/* Flights */}
+        {/* Flights — bigger, brighter, with glow halo */}
         {showFlights && flights.map((f) => {
           const [x, y] = project(f.lat, f.lng);
           return (
             <g key={f.icao24}
               onMouseEnter={() => setHover({ kind: "flight", f })}
               onMouseLeave={() => setHover((h) => (h?.kind === "flight" && h.f.icao24 === f.icao24 ? null : h))}
-              transform={`translate(${x}, ${y})${f.heading != null ? ` rotate(${f.heading})` : ""}`}
               style={{ cursor: "pointer" }}
             >
-              <path d="M0,-3 L2,2 L0,1 L-2,2 Z" fill="#a8e6ff" opacity="0.7" />
+              <circle cx={x} cy={y} r="4.5" fill="#7ab8ff" opacity="0.15" />
+              <g transform={`translate(${x}, ${y})${f.heading != null ? ` rotate(${f.heading})` : ""}`}>
+                <path d="M0,-5 L3.5,3.5 L0,1.8 L-3.5,3.5 Z" fill="#a8e6ff" opacity="0.95" stroke="#7ab8ff" strokeWidth="0.3" />
+              </g>
+            </g>
+          );
+        })}
+
+        {/* Chokepoints — strategic narrows always on the world map */}
+        {showShips && CHOKEPOINTS.map((c) => {
+          const [x, y] = project(c.lat, c.lng);
+          return (
+            <g key={c.slug} style={{ cursor: "pointer" }}>
+              <circle cx={x} cy={y} r="14" fill="var(--accent-warm)" opacity="0.07" />
+              <circle cx={x} cy={y} r="8" fill="var(--accent-warm)" opacity="0.18" />
+              <circle cx={x} cy={y} r="4.5" fill="var(--accent-warm)" stroke="#fff" strokeOpacity="0.9" strokeWidth="0.8" />
+              <text x={x + 9} y={y + 3.5} fontSize="8" fill="var(--accent-warm)" fontWeight="700" style={{ filter: "drop-shadow(0 0 3px rgba(0,0,0,0.85))" }}>{c.short.toUpperCase()}</text>
+              <title>{c.name} — {c.blurb}</title>
             </g>
           );
         })}
