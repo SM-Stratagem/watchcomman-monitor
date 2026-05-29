@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { CommandPalette } from "./CommandPalette";
+import { MobileMenu } from "./MobileMenu";
 
 const PRIMARY = [
   { href: "/dashboard", label: "Dashboard" },
@@ -85,9 +86,10 @@ export function Header() {
 
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <CommandPalette />
-          <span className="wm-pill" style={{ fontSize: 9.5 }}>
+          <span className="wm-pill wm-live-pill" style={{ fontSize: 9.5 }}>
             <span className="wm-dot" /> LIVE
           </span>
+          <MobileMenu />
         </div>
       </div>
       <style>{`
@@ -144,6 +146,7 @@ export function Header() {
         .wm-nav-dropdown .wm-nav-desc { font-size: 10.5px; color: var(--ink-3); margin-top: 2px; }
         @media (max-width: 880px) {
           .wm-nav { display: none !important; }
+          .wm-live-pill { display: none !important; }
         }
       `}</style>
     </header>
