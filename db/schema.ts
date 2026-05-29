@@ -1,4 +1,5 @@
 import {
+  boolean,
   index,
   integer,
   numeric,
@@ -209,3 +210,139 @@ export const gpsJamming = pgTable(
     index("wm_gps_snapshot_date_idx").on(table.snapshotDate),
   ],
 );
+
+// ───────────────────────── Supporters / API / Email ─────────────────────────
+
+export const supporters = pgTable(
+  "wm_supporters",
+  {
+    id: serial("id").primaryKey(),
+    email: varchar("email", { length: 320 }).notNull(),
+    name: varchar("name", { length: 200 }),
+    bmcSupporterId: varchar("bmc_supporter_id", { length: 80 }),
+    tier: varchar("tier", { length: 40 }).notNull().default("one-off"),
+    amountTotalCents: integer("amount_total_cents").notNull().default(0),
+    currency: varchar("currency", { length: 8 }).notNull().default("USD"),
+    active: boolean("active").notNull().default(true),
+    unsubToken: varchar("unsub_token", { length: 64 }).notNull(),
+    firstDonationAt: timestamp("first_donation_at", { withTimezone: true }).notNull(),
+    lastDonationAt: timestamp("last_donation_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("wm_supporters_email_idx").on(t.email),
+    uniqueIndex("wm_supporters_unsub_idx").on(t.unsubToken),
+    index("wm_supporters_active_idx").on(t.active),
+  ],
+);
+
+export const apiKeys = pgTable(
+  "wm_api_keys",
+  {
+    id: serial("id").primaryKey(),
+    keyHash: varchar("key_hash", { length: 80 }).notNull(),
+    keyPrefix: varchar("key_prefix", { length: 12 }).notNull(),
+    supporterId: integer("supporter_id").references(() => supporters.id, { onDelete: "cascade" }),
+    userId: varchar("user_id", { length: 64 }),
+    label: varchar("label", { length: 120 }),
+    scopes: varchar("scopes", { length: 120 }).notNull().default("read"),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("wm_api_keys_hash_idx").on(t.keyHash),
+    index("wm_api_keys_supporter_idx").on(t.supporterId),
+    index("wm_api_keys_user_idx").on(t.userId),
+  ],
+);
+
+export const emailLog = pgTable(
+  "wm_email_log",
+  {
+    id: serial("id").primaryKey(),
+    supporterId: integer("supporter_id").references(() => supporters.id, { onDelete: "cascade" }),
+    kind: varchar("kind", { length: 40 }).notNull(),
+    toEmail: varchar("to_email", { length: 320 }).notNull(),
+    subject: varchar("subject", { length: 280 }).notNull(),
+    externalKey: varchar("external_key", { length: 120 }),
+    resendId: varchar("resend_id", { length: 120 }),
+    status: varchar("status", { length: 32 }).notNull().default("sent"),
+    error: text("error"),
+    sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("wm_email_log_external_idx").on(t.externalKey),
+    index("wm_email_log_supporter_idx").on(t.supporterId),
+    index("wm_email_log_sent_idx").on(t.sentAt),
+  ],
+);
+
+export const feedStatus = pgTable(
+  "wm_feed_status",
+  {
+    id: serial("id").primaryKey(),
+    sourceSlug: varchar("source_slug", { length: 80 }).notNull(),
+    kind: varchar("kind", { length: 24 }).notNull().default("rss"),
+    ok: boolean("ok").notNull(),
+    itemsReturned: integer("items_returned").notNull().default(0),
+    durationMs: integer("duration_ms").notNull().default(0),
+    error: text("error"),
+    lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+    lastFailureAt: timestamp("last_failure_at", { withTimezone: true }),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("wm_feed_status_slug_idx").on(t.sourceSlug),
+    index("wm_feed_status_kind_idx").on(t.kind),
+    index("wm_feed_status_ok_idx").on(t.ok),
+  ],
+);
+
+// ───────────────────────── BetterAuth tables ─────────────────────────
+
+export const authUser = pgTable("wm_auth_user", {
+  id: varchar("id", { length: 64 }).primaryKey(),
+  email: varchar("email", { length: 320 }).notNull(),
+  emailVerified: boolean("emailVerified").notNull().default(false),
+  name: varchar("name", { length: 200 }),
+  image: text("image"),
+  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [uniqueIndex("wm_auth_user_email_idx").on(t.email)]);
+
+export const authSession = pgTable("wm_auth_session", {
+  id: varchar("id", { length: 64 }).primaryKey(),
+  userId: varchar("userId", { length: 64 }).notNull().references(() => authUser.id, { onDelete: "cascade" }),
+  token: varchar("token", { length: 128 }).notNull(),
+  expiresAt: timestamp("expiresAt", { withTimezone: true }).notNull(),
+  ipAddress: varchar("ipAddress", { length: 64 }),
+  userAgent: text("userAgent"),
+  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [uniqueIndex("wm_auth_session_token_idx").on(t.token)]);
+
+export const authAccount = pgTable("wm_auth_account", {
+  id: varchar("id", { length: 64 }).primaryKey(),
+  userId: varchar("userId", { length: 64 }).notNull().references(() => authUser.id, { onDelete: "cascade" }),
+  accountId: varchar("accountId", { length: 200 }).notNull(),
+  providerId: varchar("providerId", { length: 80 }).notNull(),
+  accessToken: text("accessToken"),
+  refreshToken: text("refreshToken"),
+  idToken: text("idToken"),
+  accessTokenExpiresAt: timestamp("accessTokenExpiresAt", { withTimezone: true }),
+  refreshTokenExpiresAt: timestamp("refreshTokenExpiresAt", { withTimezone: true }),
+  scope: text("scope"),
+  password: text("password"),
+  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [index("wm_auth_account_userId_idx").on(t.userId)]);
+
+export const authVerification = pgTable("wm_auth_verification", {
+  id: varchar("id", { length: 64 }).primaryKey(),
+  identifier: varchar("identifier", { length: 320 }).notNull(),
+  value: varchar("value", { length: 200 }).notNull(),
+  expiresAt: timestamp("expiresAt", { withTimezone: true }).notNull(),
+  createdAt: timestamp("createdAt", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => [index("wm_auth_verification_identifier_idx").on(t.identifier)]);

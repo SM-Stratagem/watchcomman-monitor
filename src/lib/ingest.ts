@@ -16,6 +16,8 @@ import { fetchNoaaAlerts } from "./feeds/noaa";
 import { fetchAllNews } from "./feeds/rss";
 import { fetchAllCommercialNews } from "./feeds/news-apis";
 import { fetchAcled } from "./feeds/conflict/acled";
+import { fetchGdeltGkg } from "./feeds/gdelt-gkg";
+import { recordFeedStatus } from "./feed-health";
 import { fetchAllSanctions, type SanctionEntry } from "./feeds/sanctions";
 import { fetchAllCyber, type CyberAdvisory } from "./feeds/cyber";
 import { fetchAllContracts, type ContractEntry } from "./feeds/contracts";
@@ -38,16 +40,29 @@ const SEVERITY_WEIGHT: Record<NormalizedSignal["severity"], number> = {
   critical: 5,
 };
 
+async function timedFetch(slug: string, kind: string, fn: () => Promise<NormalizedSignal[]>): Promise<NormalizedSignal[]> {
+  const t0 = Date.now();
+  try {
+    const items = await fn();
+    await recordFeedStatus({ sourceSlug: slug, kind, ok: true, itemsReturned: items.length, durationMs: Date.now() - t0 });
+    return items;
+  } catch (e) {
+    await recordFeedStatus({ sourceSlug: slug, kind, ok: false, durationMs: Date.now() - t0, error: e instanceof Error ? e.message : String(e) });
+    return [];
+  }
+}
+
 async function fetchAll(): Promise<NormalizedSignal[]> {
   const tasks: Array<Promise<NormalizedSignal[]>> = [
-    fetchUsgs(),
-    fetchEonet(),
-    fetchReliefWeb(),
-    fetchGdacs(),
-    fetchWhoDon(),
-    fetchGdelt(),
-    fetchNoaaAlerts(),
-    fetchAcled(),
+    timedFetch("usgs", "signal", fetchUsgs),
+    timedFetch("eonet", "signal", fetchEonet),
+    timedFetch("reliefweb", "signal", fetchReliefWeb),
+    timedFetch("gdacs", "signal", fetchGdacs),
+    timedFetch("who-don", "signal", fetchWhoDon),
+    timedFetch("gdelt-doc", "signal", fetchGdelt),
+    timedFetch("gdelt-gkg", "signal", fetchGdeltGkg),
+    timedFetch("noaa-cap", "signal", fetchNoaaAlerts),
+    timedFetch("acled", "signal", fetchAcled),
   ];
 
   // Optional sibling-monitor feeds.

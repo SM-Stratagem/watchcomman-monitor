@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { SignalRow } from "@/lib/dashboard";
 import { LAYERS, type MapMarker } from "@/lib/map-layers";
 import { severityColor } from "@/lib/format";
+import { LiveVesselsOverlay } from "./LiveVesselsOverlay";
 
 const W = 1800;
 const H = 900;
@@ -237,6 +238,8 @@ export function OsintMap({ signals }: { signals: SignalRow[] }) {
           );
         })}
       </svg>
+
+      <LiveVesselsOverlay />
 
       {/* Legend (bottom) */}
       <div style={{

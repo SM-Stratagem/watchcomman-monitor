@@ -1,4 +1,5 @@
 import { activeRssSources, type Source } from "@/lib/sources";
+import { recordFeedStatus } from "@/lib/feed-health";
 
 export type NewsItem = {
   externalKey: string;
@@ -97,6 +98,7 @@ function parseRssXml(xml: string, src: Source): NewsItem[] {
 
 async function fetchOne(src: Source, timeoutMs = 8000): Promise<NewsItem[]> {
   if (!src.rss) return [];
+  const t0 = Date.now();
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeoutMs);
@@ -108,10 +110,16 @@ async function fetchOne(src: Source, timeoutMs = 8000): Promise<NewsItem[]> {
       signal: controller.signal,
     });
     clearTimeout(t);
-    if (!res.ok) return [];
+    if (!res.ok) {
+      await recordFeedStatus({ sourceSlug: src.slug, kind: "rss", ok: false, durationMs: Date.now() - t0, error: `HTTP ${res.status}` });
+      return [];
+    }
     const xml = await res.text();
-    return parseRssXml(xml, src);
-  } catch {
+    const items = parseRssXml(xml, src);
+    await recordFeedStatus({ sourceSlug: src.slug, kind: "rss", ok: true, itemsReturned: items.length, durationMs: Date.now() - t0 });
+    return items;
+  } catch (e) {
+    await recordFeedStatus({ sourceSlug: src.slug, kind: "rss", ok: false, durationMs: Date.now() - t0, error: e instanceof Error ? e.message : "fetch failed" });
     return [];
   }
 }

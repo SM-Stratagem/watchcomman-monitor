@@ -19,6 +19,8 @@ import { ContractsPanel } from "@/components/ContractsPanel";
 import { AdversaryTracker, ADVERSARIES } from "@/components/AdversaryTracker";
 import { MilitaryAirPanel } from "@/components/MilitaryAirPanel";
 import { MaritimePanel } from "@/components/MaritimePanel";
+import { WarningLevelBadge } from "@/components/WarningLevelBadge";
+import { computeWarningLevel } from "@/lib/warning-level";
 import { getDashboardSnapshot, getNews, getNewsCountsByRegion, getTimeBuckets } from "@/lib/dashboard";
 import { getMarketSnapshot } from "@/lib/markets";
 import { getAiBrief } from "@/lib/ai";
@@ -75,6 +77,7 @@ export default async function Page() {
   const riskScore = Math.min(99, Math.round(snap.totals.highSeverity * 1.5 + snap.signals.length * 0.2));
   const renderedAt = new Date().getTime();
   const chokepoints = computeChokepointStatus(aggregateNews, snap.signals);
+  const warning = computeWarningLevel({ brief, signals: snap.signals, sanctions, cyber, chokepoints });
 
   return (
     <>
@@ -119,11 +122,12 @@ export default async function Page() {
 
         {/* STRATEGIC STRIP */}
         <section style={{ padding: "0 28px 22px" }}>
-          <div className="wm-shell" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
+          <div className="wm-shell" style={{ display: "grid", gridTemplateColumns: "minmax(260px, 1.6fr) repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
+            <WarningLevelBadge w={warning} />
             <div className="wm-tile wm-tile-accent">
-              <div className="wm-mono" style={{ fontSize: 9, color: "var(--ink-3)", letterSpacing: "0.22em" }}>STRATEGIC RISK</div>
+              <div className="wm-mono" style={{ fontSize: 9, color: "var(--ink-3)", letterSpacing: "0.22em" }}>COMPOSITE RISK</div>
               <div className="wm-display" style={{ fontSize: 38, marginTop: 4, color: severityColor("critical") }}>{riskScore}</div>
-              <div style={{ fontSize: 11, color: "var(--ink-2)" }}>Composite stress index</div>
+              <div style={{ fontSize: 11, color: "var(--ink-2)" }}>Old composite (legacy)</div>
             </div>
             <div className="wm-tile">
               <div className="wm-mono" style={{ fontSize: 9, color: "var(--ink-3)", letterSpacing: "0.22em" }}>HIGH · CRITICAL</div>
