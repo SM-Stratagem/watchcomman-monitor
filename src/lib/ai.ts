@@ -2,6 +2,7 @@
 // Falls back to top headline if neither is set.
 
 import type { NewsRow, SignalRow } from "./dashboard";
+import { isIndependent, isStateMedia } from "./provenance";
 
 const MODEL_ANTHROPIC = "claude-haiku-4-5-20251001";
 const MODEL_OPENAI = "gpt-4o-mini";
@@ -18,7 +19,28 @@ export type AiBrief = {
   theaters: Array<{ name: string; level: "HOT" | "ELEVATED" | "WATCH" | "STABLE"; note: string }>;
   generated: string;
   model: string | null;
+  credibility: {
+    sourcesAnalyzed: number;
+    independentSources: number;
+    stateMediaSources: number;
+    confidence: "high" | "medium" | "low";
+  };
 };
+
+function computeCredibility(news: NewsRow[]): AiBrief["credibility"] {
+  const slugs = new Set(news.map((n) => n.sourceSlug));
+  let independent = 0;
+  let stateMedia = 0;
+  for (const n of news) {
+    if (isIndependent(n.sourceSlug, n.region)) independent++;
+    else if (isStateMedia(n.sourceSlug, n.region)) stateMedia++;
+  }
+  const total = slugs.size;
+  const indepRatio = total ? independent / news.length : 0;
+  const confidence: AiBrief["credibility"]["confidence"] =
+    total >= 12 && indepRatio >= 0.7 ? "high" : total >= 6 && indepRatio >= 0.5 ? "medium" : "low";
+  return { sourcesAnalyzed: total, independentSources: independent, stateMediaSources: stateMedia, confidence };
+}
 
 function fallbackBrief(news: NewsRow[], signals: SignalRow[]): AiBrief {
   const head = news[0]?.title ?? signals[0]?.title ?? "Global situation nominal";
@@ -37,6 +59,7 @@ function fallbackBrief(news: NewsRow[], signals: SignalRow[]): AiBrief {
     ],
     generated: new Date().toISOString(),
     model: null,
+    credibility: computeCredibility(news),
   };
 }
 
@@ -222,6 +245,7 @@ export async function getAiBrief(news: NewsRow[], signals: SignalRow[]): Promise
       : fallbackBrief(news, signals).theaters,
     generated: new Date().toISOString(),
     model: modelUsed,
+    credibility: computeCredibility(news),
   };
   cache.set(cacheKey, { value: brief, expiresAt: Date.now() + TTL_MS });
   return brief;

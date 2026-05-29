@@ -1,5 +1,5 @@
 import type { NewsRow } from "@/lib/dashboard";
-import { formatRelative } from "@/lib/format";
+import { NewsItem } from "./NewsItem";
 
 export function NewsPanel({
   title,
@@ -37,21 +37,7 @@ export function NewsPanel({
         ) : (
           <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
             {items.slice(0, 18).map((n) => (
-              <li key={n.id} style={{ padding: "8px 10px", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                <a href={n.link} target="_blank" rel="noopener noreferrer" style={{ display: "block" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                    <span className="wm-mono" style={{ fontSize: 9, color: accent, letterSpacing: "0.16em", textTransform: "uppercase" }}>
-                      {n.sourceName}
-                    </span>
-                    <span className="wm-mono" style={{ fontSize: 9, color: "var(--ink-3)", letterSpacing: "0.14em" }}>
-                      {formatRelative(n.publishedAt)}
-                    </span>
-                  </div>
-                  <div style={{ marginTop: 3, color: "var(--ink-0)", fontSize: 12, lineHeight: 1.35 }}>
-                    {n.title}
-                  </div>
-                </a>
-              </li>
+              <NewsItem key={n.id} item={n} accent={accent} />
             ))}
           </ul>
         )}

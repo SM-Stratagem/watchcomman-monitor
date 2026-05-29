@@ -1,6 +1,9 @@
 import { sql } from "drizzle-orm";
 import { getDb } from "./db";
-import { categoryStats, countryStats, ingestRuns, news, regionStats, signals } from "../../db/schema";
+import {
+  categoryStats, contracts, countryStats, cyberAdvisories, ingestRuns,
+  news, regionStats, sanctionsEntries, signals,
+} from "../../db/schema";
 import { buildSeedSignals } from "./seed-signals";
 import type { NormalizedSignal } from "./feeds/types";
 import { fetchUsgs } from "./feeds/usgs";
@@ -12,6 +15,10 @@ import { fetchGdelt } from "./feeds/gdelt";
 import { fetchNoaaAlerts } from "./feeds/noaa";
 import { fetchAllNews } from "./feeds/rss";
 import { fetchAllCommercialNews } from "./feeds/news-apis";
+import { fetchAcled } from "./feeds/conflict/acled";
+import { fetchAllSanctions, type SanctionEntry } from "./feeds/sanctions";
+import { fetchAllCyber, type CyberAdvisory } from "./feeds/cyber";
+import { fetchAllContracts, type ContractEntry } from "./feeds/contracts";
 
 export type IngestResult = {
   runId: number;
@@ -40,6 +47,7 @@ async function fetchAll(): Promise<NormalizedSignal[]> {
     fetchWhoDon(),
     fetchGdelt(),
     fetchNoaaAlerts(),
+    fetchAcled(),
   ];
 
   // Optional sibling-monitor feeds.
@@ -50,6 +58,102 @@ async function fetchAll(): Promise<NormalizedSignal[]> {
 
   const results = await Promise.all(tasks.map((p) => p.catch(() => [] as NormalizedSignal[])));
   return results.flat();
+}
+
+async function persistSanctions(items: SanctionEntry[]): Promise<{ inserted: number; updated: number }> {
+  if (items.length === 0) return { inserted: 0, updated: 0 };
+  const db = getDb();
+  const now = new Date();
+  let inserted = 0;
+  let updated = 0;
+  for (const e of items) {
+    try {
+      const result = await db.insert(sanctionsEntries).values({
+        externalKey: e.externalKey,
+        jurisdiction: e.jurisdiction,
+        listName: e.listName,
+        entityName: e.entityName,
+        entityType: e.entityType ?? null,
+        program: e.program ?? null,
+        addressCountry: e.addressCountry ?? null,
+        remarks: e.remarks ?? null,
+        rawJson: e.raw ? JSON.stringify(e.raw).slice(0, 4000) : null,
+        listedAt: e.listedAt ? new Date(e.listedAt) : null,
+        firstSeenAt: now,
+        lastSeenAt: now,
+      }).onConflictDoUpdate({
+        target: sanctionsEntries.externalKey,
+        set: {
+          entityName: e.entityName,
+          entityType: e.entityType ?? null,
+          program: e.program ?? null,
+          addressCountry: e.addressCountry ?? null,
+          remarks: e.remarks ?? null,
+          lastSeenAt: now,
+        },
+      }).returning({ id: sanctionsEntries.id, firstSeenAt: sanctionsEntries.firstSeenAt });
+      const r = result[0];
+      if (r && Math.abs(r.firstSeenAt.getTime() - now.getTime()) < 30_000) inserted++;
+      else updated++;
+    } catch {}
+  }
+  return { inserted, updated };
+}
+
+async function persistCyber(items: CyberAdvisory[]): Promise<number> {
+  if (items.length === 0) return 0;
+  const db = getDb();
+  let n = 0;
+  for (const c of items) {
+    try {
+      await db.insert(cyberAdvisories).values({
+        externalKey: c.externalKey,
+        source: c.source,
+        cve: c.cve,
+        title: c.title,
+        summary: c.summary,
+        severity: c.severity,
+        cvss: c.cvss != null ? String(c.cvss) : null,
+        vendor: c.vendor,
+        product: c.product,
+        link: c.link,
+        publishedAt: new Date(c.publishedAt),
+      }).onConflictDoUpdate({
+        target: cyberAdvisories.externalKey,
+        set: { severity: c.severity, summary: c.summary, cvss: c.cvss != null ? String(c.cvss) : null },
+      });
+      n++;
+    } catch {}
+  }
+  return n;
+}
+
+async function persistContracts(items: ContractEntry[]): Promise<number> {
+  if (items.length === 0) return 0;
+  const db = getDb();
+  let n = 0;
+  for (const c of items) {
+    try {
+      await db.insert(contracts).values({
+        externalKey: c.externalKey,
+        jurisdiction: c.jurisdiction,
+        title: c.title,
+        agency: c.agency,
+        naics: c.naics,
+        valueUsd: c.valueUsd != null ? String(c.valueUsd) : null,
+        country: c.country,
+        summary: c.summary,
+        link: c.link,
+        publishedAt: new Date(c.publishedAt),
+        deadlineAt: c.deadlineAt ? new Date(c.deadlineAt) : null,
+      }).onConflictDoUpdate({
+        target: contracts.externalKey,
+        set: { title: c.title, summary: c.summary, link: c.link, deadlineAt: c.deadlineAt ? new Date(c.deadlineAt) : null },
+      });
+      n++;
+    } catch {}
+  }
+  return n;
 }
 
 async function fetchSibling(url: string, source: string): Promise<NormalizedSignal[]> {
@@ -257,6 +361,36 @@ export async function ingestSignals(): Promise<IngestResult> {
     errors++;
   }
 
+  // Defense layer ingest: sanctions, cyber, contracts. Each isolated; failures don't break the run.
+  let sanctionsResult = { items: 0, inserted: 0, updated: 0, byJurisdiction: {} as Record<string, number> };
+  let cyberResult = { items: 0, written: 0, bySource: {} as Record<string, number> };
+  let contractsResult = { items: 0, written: 0, byJurisdiction: {} as Record<string, number> };
+
+  try {
+    const [s, c, ct] = await Promise.all([
+      fetchAllSanctions().catch(() => ({ items: [] as SanctionEntry[], byJurisdiction: {} })),
+      fetchAllCyber().catch(() => ({ items: [] as CyberAdvisory[], bySource: {} })),
+      fetchAllContracts().catch(() => ({ items: [] as ContractEntry[], byJurisdiction: {} })),
+    ]);
+    if (s.items.length > 0) {
+      const r = await persistSanctions(s.items);
+      sanctionsResult = { items: s.items.length, inserted: r.inserted, updated: r.updated, byJurisdiction: s.byJurisdiction };
+    }
+    if (c.items.length > 0) {
+      const n = await persistCyber(c.items);
+      cyberResult = { items: c.items.length, written: n, bySource: c.bySource };
+    }
+    if (ct.items.length > 0) {
+      const n = await persistContracts(ct.items);
+      contractsResult = { items: ct.items.length, written: n, byJurisdiction: ct.byJurisdiction };
+    }
+    // Prune old contracts (>120d) + cyber (>180d).
+    try { await db.execute(sql`DELETE FROM ${contracts} WHERE published_at < NOW() - INTERVAL '120 days'`); } catch {}
+    try { await db.execute(sql`DELETE FROM ${cyberAdvisories} WHERE published_at < NOW() - INTERVAL '180 days'`); } catch {}
+  } catch {
+    errors++;
+  }
+
   const endedAt = new Date();
   await db
     .update(ingestRuns)
@@ -266,7 +400,13 @@ export async function ingestSignals(): Promise<IngestResult> {
       updated,
       total: all.length,
       errors,
-      notes: JSON.stringify({ bySource, news: { inserted: newsInserted, okSources: newsOk, failedSources: newsFailed } }).slice(0, 800),
+      notes: JSON.stringify({
+        bySource,
+        news: { inserted: newsInserted, okSources: newsOk, failedSources: newsFailed },
+        sanctions: sanctionsResult,
+        cyber: cyberResult,
+        contracts: contractsResult,
+      }).slice(0, 1600),
     })
     .where(sql`${ingestRuns.id} = ${run.id}`);
 

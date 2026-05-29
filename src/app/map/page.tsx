@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { WorldMap } from "@/components/WorldMap";
@@ -23,7 +24,7 @@ export default async function Page() {
           <h1 className="wm-display" style={{ fontSize: "clamp(36px, 5vw, 64px)", margin: "8px 0 18px" }}>Live world map</h1>
           <p style={{ color: "var(--ink-2)", fontSize: 14, maxWidth: 640, lineHeight: 1.6, marginBottom: 28 }}>
             Every geolocated signal in the rolling window. Hover any marker for detail; filter by severity or category.
-            Prefer the 3D atlas? <a href="/#globe" style={{ color: "var(--accent)" }}>Open the globe →</a>
+            Prefer the 3D atlas? <Link href="/#globe" style={{ color: "var(--accent)" }}>Open the globe →</Link>
           </p>
           <WorldMap signals={snap.signals} />
         </div>

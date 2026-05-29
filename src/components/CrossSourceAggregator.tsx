@@ -1,4 +1,5 @@
 import type { NewsRow } from "@/lib/dashboard";
+import { isIndependent, isStateMedia } from "@/lib/provenance";
 
 // Surfaces stories that multiple sources are covering simultaneously.
 // We bucket headlines by overlapping noun-content and rank by source count.
@@ -65,11 +66,23 @@ export function CrossSourceAggregator({ items }: { items: NewsRow[] }) {
         ) : (
           top.map((c) => {
             const uniqueSources = new Set(c.titles.map((t) => t.sourceSlug));
+            let independent = 0;
+            let stateMedia = 0;
+            for (const s of uniqueSources) {
+              const region = c.titles.find((t) => t.sourceSlug === s)?.region;
+              if (isStateMedia(s, region)) stateMedia++;
+              else if (isIndependent(s, region)) independent++;
+            }
             return (
               <li key={c.titles[0].id} style={{ padding: "10px 12px", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                  <span className="wm-mono" style={{ fontSize: 9, color: "var(--accent-warm)", letterSpacing: "0.2em" }}>
-                    {uniqueSources.size} SOURCES
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <span className="wm-mono" style={{ fontSize: 9, color: "var(--accent-warm)", letterSpacing: "0.2em" }}>
+                      {uniqueSources.size} SOURCES
+                    </span>
+                    <span className="wm-mono" title="Independent / state-media corroboration" style={{ fontSize: 8, color: "var(--ink-3)", letterSpacing: "0.14em" }}>
+                      {independent} INDEP · {stateMedia} STATE
+                    </span>
                   </span>
                   <span className="wm-mono" style={{ fontSize: 9, color: "var(--ink-3)", letterSpacing: "0.16em" }}>
                     {c.titles.length} ARTICLES

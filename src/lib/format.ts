@@ -14,9 +14,9 @@ export function unslugify(slug: string, dict: string[]): string | null {
   return null;
 }
 
-export function formatRelative(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const t = new Date(iso).getTime();
+export function formatRelative(when: string | Date | null | undefined): string {
+  if (!when) return "—";
+  const t = when instanceof Date ? when.getTime() : new Date(when).getTime();
   const diff = Date.now() - t;
   if (!Number.isFinite(diff)) return "—";
   const min = Math.max(1, Math.round(diff / 60_000));

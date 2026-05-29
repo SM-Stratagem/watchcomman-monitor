@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { OsintMap } from "@/components/OsintMap";
@@ -12,9 +13,20 @@ import { CrossSourceAggregator } from "@/components/CrossSourceAggregator";
 import { PredictionsPanel } from "@/components/PredictionsPanel";
 import { AiBriefPanel } from "@/components/AiBriefPanel";
 import { TechPulse } from "@/components/TechPulse";
+import { SanctionsPanel } from "@/components/SanctionsPanel";
+import { CyberPanel } from "@/components/CyberPanel";
+import { ContractsPanel } from "@/components/ContractsPanel";
+import { AdversaryTracker, ADVERSARIES } from "@/components/AdversaryTracker";
+import { MilitaryAirPanel } from "@/components/MilitaryAirPanel";
+import { MaritimePanel } from "@/components/MaritimePanel";
 import { getDashboardSnapshot, getNews, getNewsCountsByRegion, getTimeBuckets } from "@/lib/dashboard";
 import { getMarketSnapshot } from "@/lib/markets";
 import { getAiBrief } from "@/lib/ai";
+import { getSanctionsDelta } from "@/lib/sanctions-diff";
+import { getCyberPanel } from "@/lib/cyber";
+import { getContracts } from "@/lib/contracts";
+import { getMilitaryFlights } from "@/lib/military-flights";
+import { computeChokepointStatus } from "@/lib/maritime";
 import { severityColor } from "@/lib/format";
 import type { Metadata } from "next";
 
@@ -44,12 +56,16 @@ const REGIONS = [
 ];
 
 export default async function Page() {
-  const [snap, regionCounts, buckets, markets, aggregateNews, ...newsByRegion] = await Promise.all([
+  const [snap, regionCounts, buckets, markets, aggregateNews, sanctions, cyber, contracts, milFlights, ...newsByRegion] = await Promise.all([
     getDashboardSnapshot(500),
     getNewsCountsByRegion(),
     getTimeBuckets({ buckets: 21 }),
     getMarketSnapshot(),
     getNews({ sinceHours: 12, limit: 200 }),
+    getSanctionsDelta(24).catch(() => ({ added: [], removed: [], totals: { ofac: { total: 0, added24h: 0, added7d: 0 }, eu: { total: 0, added24h: 0, added7d: 0 }, uk: { total: 0, added24h: 0, added7d: 0 }, bis: { total: 0, added24h: 0, added7d: 0 } } })),
+    getCyberPanel().catch(() => ({ recent: [], totals: { kev: 0, nvd: 0, hibp: 0, critical7d: 0 } })),
+    getContracts(40).catch(() => ({ recent: [], totals: { samCount: 0, tedCount: 0, ukCount: 0, dscaCount: 0, total: 0 } })),
+    getMilitaryFlights().catch(() => []),
     ...REGIONS.map((r) => getNews({ region: r.slug, sinceHours: 48, limit: 18 })),
   ]);
 
@@ -57,25 +73,41 @@ export default async function Page() {
   const regionsWithNews = REGIONS.map((r, i) => ({ ...r, items: newsByRegion[i] }));
   const totalNews = Object.values(regionCounts).reduce((a, b) => a + b, 0);
   const riskScore = Math.min(99, Math.round(snap.totals.highSeverity * 1.5 + snap.signals.length * 0.2));
+  const renderedAt = new Date().getTime();
+  const chokepoints = computeChokepointStatus(aggregateNews, snap.signals);
 
   return (
     <>
       <Header />
       <main>
         {/* HERO BAR */}
-        <section style={{ padding: "30px 28px 16px" }}>
+        <section style={{ padding: "36px 28px 18px" }}>
           <div className="wm-shell" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
             <div>
-              <div className="wm-mono" style={{ fontSize: 10, color: "var(--accent)", letterSpacing: "0.22em" }}>● LIVE OSINT DASHBOARD</div>
-              <h1 className="wm-display" style={{ fontSize: "clamp(28px, 4vw, 48px)", margin: "8px 0 0", letterSpacing: "-0.01em" }}>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <span className="wm-pulse" aria-hidden />
+                <span className="wm-mono" style={{ fontSize: 10, color: "var(--accent)", letterSpacing: "0.22em" }}>
+                  LIVE OSINT DASHBOARD · {snap.totals.lastIngestAt ? `LAST INGEST ${new Date(snap.totals.lastIngestAt).toUTCString().slice(17, 22)} UTC` : "INGEST PENDING"}
+                </span>
+              </div>
+              <h1 className="wm-display" style={{ fontSize: "clamp(30px, 4.4vw, 52px)", margin: "0", letterSpacing: "-0.015em" }}>
                 World Monitor — Real-Time Global Intelligence
               </h1>
-              <p style={{ color: "var(--ink-2)", marginTop: 8, fontSize: 13, maxWidth: 800, lineHeight: 1.6 }}>
-                {totalNews.toLocaleString()} news items / 48h · {snap.signals.length} active signals · {snap.totals.countriesWatched} countries · 280+ sources · live flights · AI brief · prediction markets
+              <p style={{ color: "var(--ink-2)", marginTop: 10, fontSize: 13.5, maxWidth: 800, lineHeight: 1.6 }}>
+                {totalNews.toLocaleString()} news items · {snap.signals.length} active signals · {snap.totals.countriesWatched} countries · {milFlights.length.toLocaleString()} military aircraft · {chokepoints.length} chokepoints monitored · AI brief
               </p>
+              <div style={{ marginTop: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <Link href="/theater" className="wm-mono" style={{ padding: "5px 10px", fontSize: 10, color: "var(--accent)", border: "1px solid var(--accent)", borderRadius: 6, letterSpacing: "0.18em" }}>THEATERS ↗</Link>
+                <Link href="/sanctions" className="wm-mono" style={{ padding: "5px 10px", fontSize: 10, color: "var(--ink-1)", border: "1px solid var(--line-strong)", borderRadius: 6, letterSpacing: "0.18em" }}>SANCTIONS</Link>
+                <Link href="/cyber" className="wm-mono" style={{ padding: "5px 10px", fontSize: 10, color: "var(--ink-1)", border: "1px solid var(--line-strong)", borderRadius: 6, letterSpacing: "0.18em" }}>CYBER</Link>
+                <Link href="/ships" className="wm-mono" style={{ padding: "5px 10px", fontSize: 10, color: "var(--ink-1)", border: "1px solid var(--line-strong)", borderRadius: 6, letterSpacing: "0.18em" }}>MARITIME</Link>
+                <Link href="/military" className="wm-mono" style={{ padding: "5px 10px", fontSize: 10, color: "var(--ink-1)", border: "1px solid var(--line-strong)", borderRadius: 6, letterSpacing: "0.18em" }}>MILITARY AIR</Link>
+                <Link href="/briefing" className="wm-mono" style={{ padding: "5px 10px", fontSize: 10, color: "var(--ink-1)", border: "1px solid var(--line-strong)", borderRadius: 6, letterSpacing: "0.18em" }}>BRIEFING PDF ↗</Link>
+              </div>
             </div>
-            <div className="wm-mono" style={{ fontSize: 10, color: "var(--ink-3)", letterSpacing: "0.2em" }}>
-              {new Date().toUTCString().slice(5, 22)} UTC
+            <div className="wm-mono" style={{ fontSize: 10, color: "var(--ink-3)", letterSpacing: "0.2em", textAlign: "right" }}>
+              <div>{new Date().toUTCString().slice(5, 22)} UTC</div>
+              <div style={{ marginTop: 2 }}>RISK {riskScore} · {snap.totals.highSeverity} HIGH+</div>
             </div>
           </div>
         </section>
@@ -88,27 +120,27 @@ export default async function Page() {
         {/* STRATEGIC STRIP */}
         <section style={{ padding: "0 28px 22px" }}>
           <div className="wm-shell" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>
-            <div className="wm-glass" style={{ padding: 14 }}>
+            <div className="wm-tile wm-tile-accent">
               <div className="wm-mono" style={{ fontSize: 9, color: "var(--ink-3)", letterSpacing: "0.22em" }}>STRATEGIC RISK</div>
-              <div className="wm-display" style={{ fontSize: 36, marginTop: 4, color: severityColor("critical") }}>{riskScore}</div>
-              <div style={{ fontSize: 11, color: "var(--ink-2)" }}>Composite stress</div>
+              <div className="wm-display" style={{ fontSize: 38, marginTop: 4, color: severityColor("critical") }}>{riskScore}</div>
+              <div style={{ fontSize: 11, color: "var(--ink-2)" }}>Composite stress index</div>
             </div>
-            <div className="wm-glass" style={{ padding: 14 }}>
-              <div className="wm-mono" style={{ fontSize: 9, color: "var(--ink-3)", letterSpacing: "0.22em" }}>HIGH / CRITICAL</div>
-              <div className="wm-display" style={{ fontSize: 36, marginTop: 4, color: severityColor("high") }}>{snap.totals.highSeverity}</div>
-              <div style={{ fontSize: 11, color: "var(--ink-2)" }}>Signals flagged high+</div>
+            <div className="wm-tile">
+              <div className="wm-mono" style={{ fontSize: 9, color: "var(--ink-3)", letterSpacing: "0.22em" }}>HIGH · CRITICAL</div>
+              <div className="wm-display" style={{ fontSize: 38, marginTop: 4, color: severityColor("high") }}>{snap.totals.highSeverity}</div>
+              <div style={{ fontSize: 11, color: "var(--ink-2)" }}>Active signals flagged high+</div>
             </div>
-            <div className="wm-glass" style={{ padding: 14 }}>
+            <div className="wm-tile">
               <div className="wm-mono" style={{ fontSize: 9, color: "var(--ink-3)", letterSpacing: "0.22em" }}>LAST 24H</div>
-              <div className="wm-display" style={{ fontSize: 36, marginTop: 4, color: "var(--accent)" }}>{snap.totals.last24h}</div>
+              <div className="wm-display" style={{ fontSize: 38, marginTop: 4, color: "var(--accent)" }}>{snap.totals.last24h}</div>
               <div style={{ fontSize: 11, color: "var(--ink-2)" }}>New signals</div>
             </div>
-            <div className="wm-glass" style={{ padding: 14 }}>
-              <div className="wm-mono" style={{ fontSize: 9, color: "var(--ink-3)", letterSpacing: "0.22em" }}>NEWS / 48H</div>
-              <div className="wm-display" style={{ fontSize: 36, marginTop: 4, color: "var(--accent-cool)" }}>{totalNews}</div>
-              <div style={{ fontSize: 11, color: "var(--ink-2)" }}>RSS + commercial APIs</div>
+            <div className="wm-tile">
+              <div className="wm-mono" style={{ fontSize: 9, color: "var(--ink-3)", letterSpacing: "0.22em" }}>NEWS · 48H</div>
+              <div className="wm-display" style={{ fontSize: 38, marginTop: 4, color: "var(--accent-cool)" }}>{totalNews.toLocaleString()}</div>
+              <div style={{ fontSize: 11, color: "var(--ink-2)" }}>From 380+ sources</div>
             </div>
-            <div className="wm-glass" style={{ padding: 14 }}>
+            <div className="wm-tile">
               <div className="wm-mono" style={{ fontSize: 9, color: "var(--ink-3)", letterSpacing: "0.22em" }}>21-DAY TREND</div>
               <div style={{ marginTop: 6 }}><Sparkline data={buckets} width={200} height={40} color="var(--accent)" /></div>
             </div>
@@ -121,6 +153,32 @@ export default async function Page() {
             <AiBriefPanel brief={brief} />
             <CrossSourceAggregator items={aggregateNews} />
             <CountryInstability countries={snap.countries} />
+          </div>
+        </section>
+
+        {/* DEFENSE INTEL ROW: Sanctions + Cyber + Contracts */}
+        <section style={{ padding: "0 28px 22px" }}>
+          <div className="wm-shell" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(310px, 1fr))", gap: 14 }}>
+            <SanctionsPanel delta={sanctions} compact />
+            <CyberPanel data={cyber} compact />
+            <ContractsPanel data={contracts} compact />
+          </div>
+        </section>
+
+        {/* ADVERSARY TRACKERS */}
+        <section style={{ padding: "0 28px 22px" }}>
+          <div className="wm-shell" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(290px, 1fr))", gap: 14 }}>
+            {ADVERSARIES.map((a) => (
+              <AdversaryTracker key={a.slug} config={a} news={aggregateNews} signals={snap.signals} asOf={renderedAt} />
+            ))}
+          </div>
+        </section>
+
+        {/* MILITARY AIR + MARITIME */}
+        <section style={{ padding: "0 28px 22px" }}>
+          <div className="wm-shell" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14 }}>
+            <MilitaryAirPanel flights={milFlights} compact />
+            <MaritimePanel items={chokepoints} compact />
           </div>
         </section>
 

@@ -9,14 +9,26 @@ const LEVEL_COLOR: Record<string, string> = {
 };
 
 export function AiBriefPanel({ brief }: { brief: AiBrief }) {
+  const cred = brief.credibility;
+  const confColor = cred?.confidence === "high" ? "var(--accent)" : cred?.confidence === "medium" ? "var(--accent-warm)" : "var(--accent-hot)";
   return (
     <div className="wm-glass" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <div className="wm-mono" style={{ fontSize: 10, color: "var(--ink-1)", letterSpacing: "0.22em" }}>AI · WORLD BRIEF</div>
         <span className="wm-mono" style={{ fontSize: 9, color: brief.model ? "var(--accent)" : "var(--accent-warm)", letterSpacing: "0.2em", padding: "2px 8px", border: `1px solid ${brief.model ? "var(--accent)" : "var(--accent-warm)"}`, borderRadius: 999 }}>
           {brief.model ?? "FALLBACK"}
         </span>
       </div>
+      {cred ? (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span className="wm-mono" title="Confidence" style={{ fontSize: 9, color: confColor, letterSpacing: "0.18em", padding: "2px 8px", border: `1px solid ${confColor}`, borderRadius: 4 }}>
+            {cred.confidence.toUpperCase()} CONFIDENCE
+          </span>
+          <span className="wm-mono" style={{ fontSize: 9, color: "var(--ink-3)", letterSpacing: "0.16em" }}>
+            {cred.sourcesAnalyzed} SOURCES · {cred.independentSources} INDEP{cred.stateMediaSources > 0 ? ` · ${cred.stateMediaSources} STATE` : ""}
+          </span>
+        </div>
+      ) : null}
       <div style={{ fontSize: 14, color: "var(--ink-0)", lineHeight: 1.5 }}>{brief.headline}</div>
       {brief.bullets.length > 0 ? (
         <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 6 }}>

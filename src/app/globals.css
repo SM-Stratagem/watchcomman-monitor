@@ -192,3 +192,98 @@ button {
   .wm-dot,
   .wm-fade-up { animation: none !important; }
 }
+
+/* ───────────────────────── added: utility classes ───────────────────────── */
+
+/* KPI tile — subtle hover lift */
+.wm-tile {
+  position: relative;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(20, 28, 52, 0.55), rgba(10, 14, 28, 0.55));
+  border: 1px solid var(--line);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  transition: border-color 0.2s ease, transform 0.18s ease, background 0.2s ease;
+  overflow: hidden;
+}
+.wm-tile:hover {
+  border-color: var(--line-strong);
+  transform: translateY(-2px);
+}
+.wm-tile-accent::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(420px 200px at -10% -10%, rgba(125,240,194,0.10), transparent 60%);
+}
+
+/* Skeleton placeholder */
+.wm-skel {
+  background: linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+  background-size: 200% 100%;
+  animation: wm-skel 1.6s ease-in-out infinite;
+  border-radius: 6px;
+}
+@keyframes wm-skel {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Section heading with eyebrow */
+.wm-section-h {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 0 0 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.wm-section-h h2 {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  color: var(--ink-0);
+  margin: 0;
+}
+
+/* Severity pulse dot — used on live indicators */
+.wm-pulse {
+  position: relative;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent-hot);
+}
+.wm-pulse::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: var(--accent-hot);
+  opacity: 0.5;
+  animation: wm-pulse-ring 2s ease-out infinite;
+}
+@keyframes wm-pulse-ring {
+  0% { transform: scale(1); opacity: 0.5; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* Hover-elevate for cards */
+.wm-card-link {
+  display: block;
+  transition: border-color 0.18s ease, transform 0.18s ease, background 0.2s ease;
+}
+.wm-card-link:hover {
+  border-color: var(--line-strong);
+  transform: translateY(-2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wm-pulse::after { animation: none; }
+  .wm-tile:hover, .wm-card-link:hover { transform: none; }
+  .wm-skel { animation: none; background: rgba(255,255,255,0.04); }
+}

@@ -16,6 +16,7 @@ export function SourceManager({ sources, regions }: { sources: Source[]; regions
       const raw = localStorage.getItem(STORAGE);
       if (raw) {
         const arr = JSON.parse(raw) as string[];
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setEnabled(new Set(arr));
       } else {
         setEnabled(new Set(sources.filter((s) => s.defaultEnabled).map((s) => s.slug)));

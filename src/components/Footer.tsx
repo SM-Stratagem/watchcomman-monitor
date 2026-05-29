@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-export function Footer({ lastIngestAt }: { lastIngestAt: string | null }) {
+export function Footer({ lastIngestAt = null }: { lastIngestAt?: string | null } = {}) {
   const year = new Date().getFullYear();
   return (
     <footer
